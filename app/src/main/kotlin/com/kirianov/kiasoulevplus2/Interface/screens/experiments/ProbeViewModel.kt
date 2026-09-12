@@ -31,8 +31,12 @@ class ProbeViewModel : ViewModel() {
 
     fun onSweep() = GeneralData.requestBusSweep()
 
-    /** Записати шину протягом [seconds]: слухати без фільтра й вести журнал змін. */
-    fun onRecord(seconds: Int) = GeneralData.requestBusRecord(seconds)
+    /**
+     * Записати шину протягом [seconds]. [filterId] порожній — слухати всю шину;
+     * заданий — лишити тільки цей CAN ID і ловити його рівним потоком без провалів.
+     */
+    fun onRecord(seconds: Int, filterId: String = "") =
+        GeneralData.requestBusRecord(seconds, filterId.trim().uppercase())
 
     /** Мітка під час запису: натискається рівно в мить дії (натиснув пульт). */
     fun onMark() = GeneralData.markBusRecording(System.currentTimeMillis())

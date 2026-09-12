@@ -447,18 +447,29 @@ object GeneralData {
 
     // --- Запис шини -------------------------------------------------------------
 
-    /** Записати шину протягом [seconds]: слухати без фільтра й вести журнал змін. */
-    fun requestBusRecord(seconds: Int) =
-        _state.update { it.copy(probe = it.probe.copy(record = RecordRequest(seconds, ++sequence))) }
+    /**
+     * Записати шину протягом [seconds] і вести журнал змін. [filterId] порожній —
+     * слухати всю шину; заданий — лишити тільки цей CAN ID і ловити його рівним
+     * потоком без провалів (уже виявленого підозрюваного, наприклад замок 433).
+     */
+    fun requestBusRecord(seconds: Int, filterId: String = "") =
+        _state.update {
+            it.copy(probe = it.probe.copy(record = RecordRequest(seconds, ++sequence, filterId)))
+        }
 
     fun clearRecordRequest() = _state.update { it.copy(probe = it.probe.copy(record = null)) }
 
     /** Відкриває запис: блок Bluetooth кличе це, щойно почав слухати. */
-    fun startBusRecording(seconds: Int, atMs: Long) =
+    fun startBusRecording(seconds: Int, atMs: Long, filterId: String = "") =
         _state.update {
             it.copy(
                 probe = it.probe.copy(
-                    recording = BusRecording(startedAtMs = atMs, seconds = seconds, running = true),
+                    recording = BusRecording(
+                        startedAtMs = atMs,
+                        seconds = seconds,
+                        running = true,
+                        filterId = filterId,
+                    ),
                 ),
             )
         }

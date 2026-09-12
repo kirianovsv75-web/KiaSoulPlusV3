@@ -396,7 +396,9 @@ object JournalFormat {
         if (!justFinished) return emptyList()
 
         val out = mutableListOf<String>()
-        out += "$at rec start сек=${now.seconds} рядків=${now.totalLines} змін=${now.events.size}"
+        val filter = if (now.filterId.isEmpty()) "вся шина" else "фільтр=${now.filterId}"
+        out += "$at rec start сек=${now.seconds} $filter " +
+            "рядків=${now.totalLines} змін=${now.events.size}"
         // За часом, бо мітка приходить з іншого потоку (натискання людини), і в
         // списку може лягти не між тими кадрами, між якими сталася насправді.
         now.events.sortedBy { it.atMs }.forEach { event ->

@@ -175,6 +175,60 @@ class JournalTest {
         assertTrue(lines.toString(), lines.any { it.contains("rec end") })
     }
 
+    /** Фільтрований запис пише в шапку, на який ID стояв фільтр, а без нього — «вся шина». */
+    @Test
+    fun `a filtered recording names the filter in its start line`() {
+        val running = State(
+            probe = ProbeState(
+                recording = BusRecording(
+                    startedAtMs = 0L,
+                    seconds = 30,
+                    running = true,
+                    filterId = "433",
+                ),
+            ),
+        )
+        val finished = State(
+            probe = ProbeState(
+                recording = BusRecording(
+                    startedAtMs = 0L,
+                    seconds = 30,
+                    running = false,
+                    totalLines = 5,
+                    filterId = "433",
+                    events = listOf(BusEvent(atMs = 0L, id = "433", bytes = listOf(0x00))),
+                ),
+            ),
+        )
+
+        val lines = JournalFormat.events(running, finished, 0L)
+        assertTrue(lines.toString(), lines.any { it.contains("rec start") && it.contains("фільтр=433") })
+    }
+
+    /** Без фільтра шапка каже «вся шина» — щоб через тиждень було ясно, що слухали все. */
+    @Test
+    fun `an unfiltered recording says the whole bus in its start line`() {
+        val running = State(
+            probe = ProbeState(
+                recording = BusRecording(startedAtMs = 0L, seconds = 30, running = true),
+            ),
+        )
+        val finished = State(
+            probe = ProbeState(
+                recording = BusRecording(
+                    startedAtMs = 0L,
+                    seconds = 30,
+                    running = false,
+                    totalLines = 5,
+                    events = listOf(BusEvent(atMs = 0L, id = "433", bytes = listOf(0x00))),
+                ),
+            ),
+        )
+
+        val lines = JournalFormat.events(running, finished, 0L)
+        assertTrue(lines.toString(), lines.any { it.contains("rec start") && it.contains("вся шина") })
+    }
+
     /** Мітка користувача виходить у журнал окремим рядком і за часом. */
     @Test
     fun `a mark lands in the recording as its own line`() {

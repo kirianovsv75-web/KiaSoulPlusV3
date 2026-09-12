@@ -317,11 +317,12 @@ private fun MediaTestCard(probeViewModel: ProbeViewModel) {
 private fun RecordCard(
     probe: ProbeState,
     connected: Boolean,
-    onRecord: (Int) -> Unit,
+    onRecord: (Int, String) -> Unit,
     onMark: () -> Unit,
 ) {
     val recording = probe.recording
     val running = recording?.running == true
+    var filter by remember { mutableStateOf("") }
 
     Card(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -343,10 +344,43 @@ private fun RecordCard(
                 style = MaterialTheme.typography.bodySmall,
             )
 
+            OutlinedTextField(
+                value = filter,
+                onValueChange = { filter = it.uppercase() },
+                label = { Text("Фільтр ID (не обовʼязково)") },
+                singleLine = true,
+                enabled = !running,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Text(
+                text = "Порожньо — слухаємо всю шину, але між вікнами лишаються провали й швидке " +
+                    "перемикання може випасти. Заданий ID знімає провали: адаптер віддає лише " +
+                    "його рівним потоком, і кожне перемикання видно без пропусків. Ним " +
+                    "підтверджують уже виявленого підозрюваного.",
+                style = MaterialTheme.typography.bodySmall,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("433", "517").forEach { suspect ->
+                    AssistChip(
+                        onClick = { filter = suspect },
+                        label = { Text(suspect) },
+                        enabled = !running,
+                    )
+                }
+                if (filter.isNotEmpty()) {
+                    AssistChip(
+                        onClick = { filter = "" },
+                        label = { Text("вся шина") },
+                        enabled = !running,
+                    )
+                }
+            }
+
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 listOf(10, 30, 60).forEach { seconds ->
                     OutlinedButton(
-                        onClick = { onRecord(seconds) },
+                        onClick = { onRecord(seconds, filter) },
                         enabled = connected && !running,
                         modifier = Modifier.weight(1f),
                     ) {
@@ -364,8 +398,11 @@ private fun RecordCard(
 
             when {
                 running -> {
+                    val scope =
+                        if (recording.filterId.isEmpty()) "вся шина"
+                        else "фільтр ${recording.filterId}"
                     Text(
-                        text = "Йде запис… змін уже ${recording.events.size}. " +
+                        text = "Йде запис ($scope)… змін уже ${recording.events.size}. " +
                             "Тисни «Мітка» рівно в мить, коли натискаєш кнопку авто.",
                         style = MaterialTheme.typography.bodyMedium,
                     )
@@ -377,8 +414,11 @@ private fun RecordCard(
                     }
                 }
                 recording != null -> {
+                    val scope =
+                        if (recording.filterId.isEmpty()) "вся шина"
+                        else "фільтр ${recording.filterId}"
                     Text(
-                        text = "Записано: ${recording.events.size} змін, " +
+                        text = "Записано ($scope): ${recording.events.size} змін, " +
                             "${recording.distinctIds} різних кадрів, " +
                             "${recording.totalLines} рядків за ${recording.seconds} с.",
                         style = MaterialTheme.typography.bodyMedium,

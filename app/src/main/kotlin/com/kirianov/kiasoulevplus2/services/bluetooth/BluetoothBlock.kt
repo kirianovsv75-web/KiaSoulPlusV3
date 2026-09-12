@@ -272,15 +272,22 @@ class BluetoothBlock(private val bluetoothManager: ElmBluetoothManager) {
         }
         scope.launch(Dispatchers.IO) {
             val startedMs = System.currentTimeMillis()
-            GeneralData.startBusRecording(request.seconds, startedMs)
+            val filterId = request.filterId
+            GeneralData.startBusRecording(request.seconds, startedMs, filterId)
             val deadline = startedMs + request.seconds * 1000L
+
+            // З фільтром адаптер віддає один ID і не захлинається, тож вікно можна
+            // тримати довгим — потік рівний, без провалів між заходами. Без фільтра
+            // повний потік переповнює буфер, і вікно навмисно коротке.
+            val windowMs = if (filterId.isEmpty()) RECORD_WINDOW_MS else RECORD_WINDOW_FILTERED_MS
+            val expectedId = filterId.ifEmpty { null }
 
             var seen = emptyMap<String, List<Int>>()
             var totalLines = 0
             try {
                 while (isActive && System.currentTimeMillis() < deadline) {
                     val lines = try {
-                        canBridge.monitorBroadcast(RECORD_WINDOW_MS, filterId = "")
+                        canBridge.monitorBroadcast(windowMs, filterId)
                     } catch (e: IOException) {
                         GeneralData.updateDebugInfo(
                             "Запис перервано: ${e.localizedMessage ?: "немає відповіді"}",
@@ -288,7 +295,7 @@ class BluetoothBlock(private val bluetoothManager: ElmBluetoothManager) {
                         break
                     }
                     totalLines += lines.size
-                    val frames = lines.mapNotNull { MonitorLineParser.parse(it, null) }
+                    val frames = lines.mapNotNull { MonitorLineParser.parse(it, expectedId) }
                     val folded = BusChangeLog.fold(seen, frames, System.currentTimeMillis())
                     seen = folded.seen
                     GeneralData.appendBusEvents(folded.events, totalLines)
@@ -706,6 +713,14 @@ class BluetoothBlock(private val bluetoothManager: ElmBluetoothManager) {
          * заходом у монітор, поки не спливе замовлений час.
          */
         const val RECORD_WINDOW_MS = 2000L
+
+        /**
+         * Одне вікно запису з фільтром на один ID, мс. Довше за звичайне: коли на
+         * шині лишається рівно один кадр, буфер повниться повільно й переповнення
+         * не буває, тож довге вікно дає суцільний потік без провалів між заходами —
+         * саме те, що треба, щоб не проґавити швидке перемикання (замок туди-сюди).
+         */
+        const val RECORD_WINDOW_FILTERED_MS = 6000L
 
         /**
          * Скільки чекати, перш ніж перепитати блок, який сказав «зайнятий», мс.
