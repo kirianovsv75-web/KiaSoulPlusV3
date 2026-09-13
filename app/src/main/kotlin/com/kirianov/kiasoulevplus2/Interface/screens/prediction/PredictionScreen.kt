@@ -48,6 +48,8 @@ import com.kirianov.kiasoulevplus2.Data.TripConditions
 import com.kirianov.kiasoulevplus2.Data.TripOption
 import com.kirianov.kiasoulevplus2.Data.TripPlanner
 import com.kirianov.kiasoulevplus2.Data.VehicleData
+import com.kirianov.kiasoulevplus2.Data.GeneralData
+import com.kirianov.kiasoulevplus2.Interface.SelectCarBanner
 import com.kirianov.kiasoulevplus2.tools.format.formatDecimal
 import com.kirianov.kiasoulevplus2.tools.format.formatDuration
 import com.kirianov.kiasoulevplus2.tools.format.formatMeasurement
@@ -66,6 +68,17 @@ fun PredictionScreen(predictionViewModel: PredictionViewModel = viewModel()) {
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
+        // Прогноз відпадає саме тут, коли авто не впізнане, — тож і банер вибору
+        // авто показуємо теж тут, а не лише на Головній.
+        SelectCarBanner(
+            garage = state.garage,
+            connected = state.isConnected,
+            odometerKm = state.vehicle.odometerKm,
+            kwhIn = state.bms.cumulativeEnergyChargedKwh,
+            kwhOut = state.bms.cumulativeEnergyDischargedKwh,
+            onConfirm = GeneralData::confirmActiveCarManually,
+        )
+
         UnknownPackCard(garage = state.garage, learnedSegments = ml.model.segments)
 
         RangeCard(ml.prediction, ml.model.confidence, state.vehicle)

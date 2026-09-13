@@ -26,6 +26,7 @@
 
 package com.kirianov.kiasoulevplus2.tools.garage
 
+import com.kirianov.kiasoulevplus2.Data.CarIdentity
 import com.kirianov.kiasoulevplus2.Data.CarProfile
 import com.kirianov.kiasoulevplus2.Data.Garage
 import com.kirianov.kiasoulevplus2.Data.GeneralData
@@ -202,6 +203,7 @@ class GarageBlock(
                     detectedVin = "",
                     vinConfirmed = false,
                     vinConfirmedByContinuity = false,
+                    identityConfirmedManually = false,
                     vinPending = false,
                     share = com.kirianov.kiasoulevplus2.Data.ShareState(),
                 )

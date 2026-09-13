@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kirianov.kiasoulevplus2.Data.BmsData
 import com.kirianov.kiasoulevplus2.Data.CalculatedData
+import com.kirianov.kiasoulevplus2.Interface.SelectCarBanner
 import com.kirianov.kiasoulevplus2.Data.ChargeConnector
 import com.kirianov.kiasoulevplus2.Data.ChargeLog
 import com.kirianov.kiasoulevplus2.Data.ChargeSession
@@ -63,6 +64,17 @@ fun MainScreen(mainViewModel: MainViewModel = viewModel()) {
             state = state,
             onConnectClick = mainViewModel::onConnectClick,
             onAutoConnectChange = mainViewModel::onAutoConnectChange,
+        )
+
+        // Не впізнали авто — просимо обрати прямо тут: без цього облік і прогноз
+        // стоять, а причина ховалася б у Налаштуваннях.
+        SelectCarBanner(
+            garage = state.garage,
+            connected = state.isConnected,
+            odometerKm = state.vehicle.odometerKm,
+            kwhIn = bms.cumulativeEnergyChargedKwh,
+            kwhOut = bms.cumulativeEnergyDischargedKwh,
+            onConfirm = GeneralData::confirmActiveCarManually,
         )
 
 

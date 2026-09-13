@@ -272,6 +272,7 @@ object GeneralData {
                 garage = it.garage.copy(
                     vinConfirmed = false,
                     vinConfirmedByContinuity = false,
+                    identityConfirmedManually = false,
                     vinPending = true,
                     detectedVin = "",
                 ),
@@ -357,6 +358,25 @@ object GeneralData {
      */
     fun selectCar(vin: String) =
         _state.update { it.copy(garage = it.garage.copy(activeVin = vin)) }
+
+    /**
+     * Людина в банері «оберіть авто» сказала, у якій машині вона зараз.
+     *
+     * На відміну від [selectCar] (перегляд), це СВІДОМЕ ПІДТВЕРДЖЕННЯ особи: облік і
+     * навчання вмикаються на це авто, а його відбиток засівається. Показується лише
+     * коли ні VIN, ні неперервність авто не впізнали, тож це не здогад замість
+     * свідчення, а відповідь на пряме питання «чиї це числа?».
+     */
+    fun confirmActiveCarManually(vin: String) =
+        _state.update {
+            it.copy(
+                garage = it.garage.copy(
+                    activeVin = vin,
+                    identityConfirmedManually = true,
+                    vinNote = "обрано вручну ...${vin.takeLast(6)}",
+                ),
+            )
+        }
 
     /** Видалити авто разом із його текою. Виконує блок гаража. */
     fun requestCarDelete(vin: String) =

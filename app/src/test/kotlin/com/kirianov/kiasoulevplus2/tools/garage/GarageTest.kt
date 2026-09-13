@@ -372,6 +372,53 @@ class GarageTest {
         assertTrue("Навчання знову дозволене", GeneralData.state.value.carLearning)
     }
 
+    /**
+     * Людина в банері «оберіть авто» підтверджує машину вручну — і облік із
+     * навчанням вмикаються, на відміну від простого перегляду ([selectCar]).
+     */
+    @Test
+    fun `manual confirmation identifies the car`() {
+        GarageBlock(MemoryStore()).start(scope)
+        GeneralData.updateGarage {
+            it.copy(
+                cars = listOf(CarProfile(vin = vin), CarProfile(vin = other)),
+                activeVin = vin,
+                loaded = true,
+            )
+        }
+        GeneralData.updateConnection(ConnectionState.Connected, "тест")
+        GeneralData.beginCarIdentification()
+        GeneralData.noteVinFailure("немає відповіді")
+        assertFalse(GeneralData.state.value.garage.identified)
+
+        GeneralData.confirmActiveCarManually(other)
+
+        val garage = GeneralData.state.value.garage
+        assertEquals(other, garage.activeVin)
+        assertTrue("Ручне підтвердження впізнає авто", garage.identified)
+        assertTrue(GeneralData.state.value.carLearning)
+    }
+
+    /** Просте перегляд-перемикання ([selectCar]) обліку НЕ вмикає — лишається виглядання. */
+    @Test
+    fun `plain selection is only viewing, not identification`() {
+        GarageBlock(MemoryStore()).start(scope)
+        GeneralData.updateGarage {
+            it.copy(
+                cars = listOf(CarProfile(vin = vin), CarProfile(vin = other)),
+                activeVin = vin,
+                loaded = true,
+            )
+        }
+        GeneralData.updateConnection(ConnectionState.Connected, "тест")
+        GeneralData.beginCarIdentification()
+        GeneralData.noteVinFailure("немає відповіді")
+
+        GeneralData.selectCar(other)
+
+        assertFalse("Вибір для перегляду не впізнає", GeneralData.state.value.garage.identified)
+    }
+
     /** А чужа батарея неперервність не складає: лишаємось при `car=?`. */
     @Test
     fun `a foreign battery is not identified by continuity`() {

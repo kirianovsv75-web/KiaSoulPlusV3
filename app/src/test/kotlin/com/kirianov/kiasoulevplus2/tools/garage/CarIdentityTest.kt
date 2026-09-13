@@ -1,5 +1,6 @@
 package com.kirianov.kiasoulevplus2.tools.garage
 
+import com.kirianov.kiasoulevplus2.Data.CarIdentity
 import com.kirianov.kiasoulevplus2.Data.CarProfile
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue

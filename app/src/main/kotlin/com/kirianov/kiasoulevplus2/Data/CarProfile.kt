@@ -123,6 +123,15 @@ data class Garage(
     val vinConfirmedByContinuity: Boolean = false,
 
     /**
+     * Людина сама сказала, у якій машині вона зараз, — коли ні VIN, ні неперервність
+     * не впізнали авто. Свідоме підтвердження в банері «оберіть авто»: далі облік і
+     * навчання йдуть у це авто, а його відбиток засівається на майбутнє.
+     *
+     * Не зберігається: підтвердження живе одне підключення, як і решта ознак особи.
+     */
+    val identityConfirmedManually: Boolean = false,
+
+    /**
      * Питання «хто це?» ще відкрите: запит VIN надіслано, відповіді нема.
      *
      * Різниця між «ще питаємо» і «спитали й не почули» тут головна. Поки питаємо —
@@ -170,7 +179,8 @@ data class Garage(
      * дорожче за хвилину пропущеного обліку.
      */
     val identified: Boolean
-        get() = !mismatched && (vinConfirmed || vinConfirmedByContinuity || cars.size <= 1)
+        get() = !mismatched &&
+            (vinConfirmed || vinConfirmedByContinuity || identityConfirmedManually || cars.size <= 1)
 
     /**
      * Чи дивимось ми зараз НЕ на те авто, що на шині.
