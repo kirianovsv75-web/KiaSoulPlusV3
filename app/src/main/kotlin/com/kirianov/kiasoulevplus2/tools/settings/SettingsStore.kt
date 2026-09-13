@@ -45,6 +45,7 @@ class FileSettingsStore(private val directory: File) : SettingsStore {
                     Settings(
                         autoConnect = autoConnect,
                         journal = values["journal"] as? Boolean ?: defaults.journal,
+                        telemetry = values["telemetry"] as? Boolean ?: defaults.telemetry,
                         wakeOnDeviceAddresses = wakeDevicesOf(values),
                         cellPalettes = palettesOf(values, defaults.cellPalettes),
                         trip = TripConditions(
@@ -75,6 +76,7 @@ class FileSettingsStore(private val directory: File) : SettingsStore {
                     linkedMapOf<String, Any?>(
                         "autoConnect" to settings.autoConnect,
                         "journal" to settings.journal,
+                        "telemetry" to settings.telemetry,
                         "wakeOnDevices" to settings.wakeOnDeviceAddresses.joinToString(SEPARATOR),
                         "tripKm" to settings.trip.distanceKm,
                         "tripPrice" to settings.trip.priceUahPerKwh,

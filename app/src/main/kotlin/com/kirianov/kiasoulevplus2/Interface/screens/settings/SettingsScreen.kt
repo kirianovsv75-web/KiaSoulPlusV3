@@ -107,6 +107,11 @@ fun SettingsScreen(settingsViewModel: SettingsViewModel) {
             enabled = state.settings.journal,
             onChange = settingsViewModel::onJournalChange,
         )
+
+        TelemetrySwitchCard(
+            enabled = state.settings.telemetry,
+            onChange = settingsViewModel::onTelemetryChange,
+        )
     }
 }
 
@@ -569,6 +574,39 @@ private fun JournalSwitchCard(enabled: Boolean, onChange: (Boolean) -> Unit) {
                 text = "Кілька мегабайтів на день у теці застосунку, старіші рядки витісняються. " +
                     "Саме журнал дозволяє відповісти «чому», а не гадати за знімком екрана. " +
                     "Поділитися ним можна на екрані «Експерименти».",
+                style = MaterialTheme.typography.bodySmall,
+            )
+        }
+    }
+}
+
+/**
+ * ТЕЛЕМЕТРІЯ БАТАРЕЇ НА СЕРВЕР.
+ *
+ * Свідомий вибір, а не мовчазна поведінка: дані батареї (заряд, напруги, струм,
+ * температури, покомірні напруги) раз на хвилину надсилаються на сервер власника
+ * застосунку. Тому тут — окремий перемикач із чесним поясненням, куди й що йде.
+ */
+@Composable
+private fun TelemetrySwitchCard(enabled: Boolean, onChange: (Boolean) -> Unit) {
+    Card(modifier = Modifier.fillMaxWidth()) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(text = "Надсилати дані на сервер", fontSize = 18.sp)
+                Switch(checked = enabled, onCheckedChange = onChange)
+            }
+            Text(
+                text = "Раз на хвилину показники батареї (заряд, напруга, струм, температури, " +
+                    "напруги комірок) надсилаються на сервер власника застосунку — щоб бачити " +
+                    "стан батареї дистанційно. Без інтернету нічого не втрачається: знімки " +
+                    "дочекаються зв'язку. Вимкнено — не надсилається нічого.",
                 style = MaterialTheme.typography.bodySmall,
             )
         }

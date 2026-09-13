@@ -218,6 +218,9 @@ object GeneralData {
     fun setAutoConnect(enabled: Boolean) =
         _state.update { it.copy(settings = it.settings.copy(autoConnect = enabled)) }
 
+    fun setTelemetryEnabled(enabled: Boolean) =
+        _state.update { it.copy(settings = it.settings.copy(telemetry = enabled)) }
+
     /**
      * Додає або прибирає пристрій зі списку будильника.
      *

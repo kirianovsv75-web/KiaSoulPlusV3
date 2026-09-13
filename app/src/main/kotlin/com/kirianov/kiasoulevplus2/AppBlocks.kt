@@ -35,6 +35,8 @@ import com.kirianov.kiasoulevplus2.tools.settings.FileSettingsStore
 import com.kirianov.kiasoulevplus2.tools.settings.SettingsBlock
 import com.kirianov.kiasoulevplus2.tools.storage.SharedPreferencesCellStore
 import com.kirianov.kiasoulevplus2.tools.storage.StorageBlock
+import com.kirianov.kiasoulevplus2.tools.telemetry.TelemetryBlock
+import com.kirianov.kiasoulevplus2.services.telemetry.HttpTelemetryUploader
 import com.kirianov.kiasoulevplus2.tools.vehicle.VehicleBlock
 import kotlinx.coroutines.CoroutineScope
 
@@ -82,6 +84,9 @@ class AppBlocks(context: Context) {
     // Міряє криву ємності різницею пожиттєвих лічильників.
     private val energy = EnergyBlock(energyStore)
     private val foreground = ForegroundBlock(context.applicationContext)
+    // Телеметрія батареї на сервер власника: працює лише коли увімкнено в
+    // налаштуваннях і налаштований сервер (див. TelemetryConfig).
+    private val telemetry = TelemetryBlock(HttpTelemetryUploader())
 
     /**
      * Обмін даними авто між телефонами.
@@ -117,6 +122,7 @@ class AppBlocks(context: Context) {
         prediction.start(scope)
         energy.start(scope)
         foreground.start(scope)
+        telemetry.start(scope)
         bluetooth.start(scope)
         // Останнім: так у журнал потрапляє вже піднятий стан, а не порожній.
         journal.start(scope)

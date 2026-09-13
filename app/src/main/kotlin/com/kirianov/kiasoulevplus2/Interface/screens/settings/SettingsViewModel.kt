@@ -19,6 +19,8 @@ class SettingsViewModel : ViewModel() {
 
     fun onJournalChange(enabled: Boolean) = GeneralData.setJournalEnabled(enabled)
 
+    fun onTelemetryChange(enabled: Boolean) = GeneralData.setTelemetryEnabled(enabled)
+
     fun onWakeDeviceChange(address: String) = GeneralData.toggleWakeOnDevice(address)
 
     /** Правка авто зі списку: назва і ємність разом, за одну дію. */

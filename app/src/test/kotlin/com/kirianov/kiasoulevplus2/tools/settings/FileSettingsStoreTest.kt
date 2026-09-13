@@ -23,6 +23,16 @@ class FileSettingsStoreTest {
         assertEquals(Settings(autoConnect = false), store.load())
     }
 
+    /** Дозвіл на телеметрію переживає перезапуск. */
+    @Test
+    fun `the telemetry choice reads back`() {
+        val store = FileSettingsStore(directory())
+
+        store.save(Settings(telemetry = true))
+
+        assertEquals(true, store.load()?.telemetry)
+    }
+
     /**
      * Пристроїв для пробудження буває кілька: магнітола з'єднується то одним
      * профілем, то іншим, і адреси в них різні.
