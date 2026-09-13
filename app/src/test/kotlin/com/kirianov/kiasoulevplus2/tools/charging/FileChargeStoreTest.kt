@@ -1,6 +1,7 @@
 package com.kirianov.kiasoulevplus2.tools.charging
 
 import com.kirianov.kiasoulevplus2.Data.ChargeLog
+import com.kirianov.kiasoulevplus2.Data.ChargeSession
 import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -104,6 +105,44 @@ class FileChargeStoreTest {
         store.save(ChargeLog(lastSessionEndedAtMs = stamp, counterBaselineKwh = 1.0, hasBaseline = true))
 
         assertEquals(stamp, store.load()!!.lastSessionEndedAtMs)
+    }
+
+    /**
+     * Журнал зарядок переживає перезапуск — і колонки зшиваються назад у ті самі
+     * сесії, з часом, приростом заряду й причиною закриття.
+     */
+    @Test
+    fun `the charge journal survives a round trip`() {
+        val store = FileChargeStore(directory())
+        val log = ChargeLog(
+            counterBaselineKwh = 27_100.0,
+            hasBaseline = true,
+            sessions = listOf(
+                ChargeSession(kwh = 6.0, socRise = 14.0, startedAtMs = 0L,
+                    endedAtMs = 1_788_000_200_000L, cause = "роз'єм"),
+                ChargeSession(kwh = 38.0, socRise = 75.0, startedAtMs = 1_788_000_000_000L,
+                    endedAtMs = 1_788_000_100_000L, cause = "пауза без руху"),
+            ),
+        )
+
+        store.save(log)
+        val back = store.load()!!
+
+        assertEquals(2, back.sessions.size)
+        assertEquals(log.sessions, back.sessions)
+    }
+
+    /** Старий файл без журналу читається без нього, а не падає. */
+    @Test
+    fun `a file without the journal loads with an empty one`() {
+        val dir = directory()
+        File(dir, "charge-log.json").writeText(
+            """{"counterBaselineKwh":27089.5,"hasBaseline":true}""",
+        )
+
+        val back = FileChargeStore(dir).load()!!
+
+        assertTrue(back.sessions.isEmpty())
     }
 
     @Test

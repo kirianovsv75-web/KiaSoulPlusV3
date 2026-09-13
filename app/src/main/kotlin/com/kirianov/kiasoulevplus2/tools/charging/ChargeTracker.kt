@@ -61,6 +61,7 @@
 package com.kirianov.kiasoulevplus2.tools.charging
 
 import com.kirianov.kiasoulevplus2.Data.ChargeLog
+import com.kirianov.kiasoulevplus2.Data.ChargeSession
 
 object ChargeTracker {
 
@@ -238,10 +239,10 @@ object ChargeTracker {
             // паузою третьою, бо він єдиний працює з порогами.
             val verdict = when {
                 rolled.charging && plugged == false ->
-                    endedWhileWatching(rolled, step, socPercent, UNPLUGGED)
+                    endedWhileWatching(rolled, step, socPercent, UNPLUGGED, CAUSE_PLUG)
 
                 rolled.charging && ignitionOn ->
-                    endedWhileWatching(rolled, step, socPercent, IGNITION)
+                    endedWhileWatching(rolled, step, socPercent, IGNITION, CAUSE_IGNITION)
 
                 else -> missedCharge(rolled, step, dischargedKwh, socPercent, nowMs, odometerKm)
             }
@@ -254,6 +255,7 @@ object ChargeTracker {
                 nowMs = nowMs,
                 missedKwh = verdict.kwh ?: 0.0,
                 missedSocRise = verdict.socRise,
+                cause = verdict.cause,
                 dayKey = dayKey,
             )
         }
@@ -371,7 +373,8 @@ object ChargeTracker {
         }
 
         val by = if (stood) "за паузу без руху" else "за паузу"
-        return Verdict(step, "зараховано ${round(step)} кВт·год $by, заряд +${round(rise)} %", rise)
+        val cause = if (stood) CAUSE_PAUSE_STILL else CAUSE_PAUSE
+        return Verdict(step, "зараховано ${round(step)} кВт·год $by, заряд +${round(rise)} %", rise, cause)
     }
 
     /**
@@ -405,6 +408,7 @@ object ChargeTracker {
         log: ChargeLog,
         step: Double,
         socPercent: Double,
+        reason: String,
         cause: String,
     ): Verdict {
         if (step <= 0.0) return Verdict(null, "")
@@ -417,11 +421,20 @@ object ChargeTracker {
             return Verdict(null, "заряд просів на ${round(drop)} % — це поїздка, не зарядка")
         }
 
-        return Verdict(step, "зарядку закрито $cause: ${round(step)} кВт·год")
+        val rise = (socPercent - log.socBaselinePercent).coerceAtLeast(0.0)
+        return Verdict(step, "зарядку закрито $reason: ${round(step)} кВт·год", rise, cause)
     }
 
     private const val UNPLUGGED = "від'єднаним роз'ємом"
     private const val IGNITION = "запалюванням"
+
+    // Короткі ярлики для журналу зарядок: чим сесію закрито.
+    private const val CAUSE_PLUG = "роз'єм"
+    private const val CAUSE_IGNITION = "запалювання"
+    private const val CAUSE_PAUSE = "пауза"
+    private const val CAUSE_PAUSE_STILL = "пауза без руху"
+    private const val CAUSE_MANUAL = "вручну"
+    private const val CAUSE_STOPPED = "заряд спинився"
 
     /**
      * Ручне «кінець зарядки»: користувач сам каже, що зарядка скінчилася.
@@ -465,6 +478,14 @@ object ChargeTracker {
             socBaselinePercent = socPercent,
             lastSeenAtMs = nowMs,
             lastDecision = "вручну зараховано ${round(total)} кВт·год",
+        ).withSession(
+            ChargeSession(
+                kwh = total,
+                socRise = totalSocRise,
+                startedAtMs = rolled.sessionStartedAtMs,
+                endedAtMs = nowMs,
+                cause = CAUSE_MANUAL,
+            ),
         )
     }
 
@@ -481,6 +502,8 @@ object ChargeTracker {
         val kwh: Double?,
         val reason: String,
         val socRise: Double = 0.0,
+        /** Короткий ярлик для журналу зарядок: чим саме сесію закрито. Порожній — не закрито. */
+        val cause: String = "",
     )
 
     private fun round(value: Double): String = (kotlin.math.round(value * 10.0) / 10.0).toString()
@@ -570,6 +593,7 @@ object ChargeTracker {
         nowMs: Long,
         missedKwh: Double,
         missedSocRise: Double,
+        cause: String,
         dayKey: String,
     ): ChargeLog {
         val total = log.sessionKwh + missedKwh
@@ -607,6 +631,16 @@ object ChargeTracker {
                 sessionKwh = 0.0,
                 sessionSocRise = 0.0,
                 sessionStartedAtMs = 0L,
+            ).withSession(
+                ChargeSession(
+                    kwh = total,
+                    socRise = totalSocRise,
+                    startedAtMs = log.sessionStartedAtMs,
+                    endedAtMs = nowMs,
+                    // Порожня причина — це коли зникла сама ознака заряджання (581),
+                    // а роз'єм і запалювання нічого не сказали: підписуємо чесно.
+                    cause = cause.ifEmpty { CAUSE_STOPPED },
+                ),
             )
             // Зарядка пройшла без нас цілком: записуємо її як завершену. Часу
             // початку ми не знаємо — знаємо тільки, що вона скінчилася не пізніше,
@@ -618,6 +652,14 @@ object ChargeTracker {
                 todayKwh = log.todayKwh + missedKwh,
                 todaySocRise = log.todaySocRise + missedSocRise,
                 dayKey = dayKey,
+            ).withSession(
+                ChargeSession(
+                    kwh = missedKwh,
+                    socRise = missedSocRise,
+                    startedAtMs = 0L,
+                    endedAtMs = nowMs,
+                    cause = cause,
+                ),
             )
             else -> log
         }

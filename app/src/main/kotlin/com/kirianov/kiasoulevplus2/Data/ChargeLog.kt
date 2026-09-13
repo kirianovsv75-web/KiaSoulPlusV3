@@ -1,6 +1,37 @@
 package com.kirianov.kiasoulevplus2.Data
 
 /**
+ * Одна ЗАВЕРШЕНА зарядка в журналі.
+ *
+ * Раніше застосунок пам'ятав лише «останню» й «за добу»: варто було статися двом
+ * зарядкам поспіль — і перша зникала без сліду. Журнал тримає їх поряд, щоб було
+ * видно історію: коли, скільки, як довго й чим закрилась.
+ *
+ * [kwh] — прийнято за пожиттєвим лічильником BMS. [socRise] — приріст заряду у
+ * відсоткових пунктах: на цій машині лічильник занижує вдвічі, тож справжні
+ * кВт·год рахуються приростом заряду через ємність профілю (див. [energyKwh] і
+ * шапку [ChargeLog]).
+ *
+ * [startedAtMs] нуль означає «початку не бачили»: зарядка, що пройшла без телефона
+ * цілком, має тільки кінець. [cause] — чим сесію закрито: щоб через тиждень було
+ * ясно, звідки взялося число.
+ */
+data class ChargeSession(
+    val kwh: Double,
+    val socRise: Double,
+    val startedAtMs: Long,
+    val endedAtMs: Long,
+    val cause: String,
+) {
+    /** Чи знаємо, коли зарядка почалася: без цього тривалість і середню не порахувати. */
+    val hasStart: Boolean get() = startedAtMs > 0L && endedAtMs > startedAtMs
+
+    /** Скільки це кВт·год за тією самою міркою, якою рахується запас ходу. */
+    fun energyKwh(capacityKwh: Double): Double =
+        if (socRise > 0.0 && capacityKwh > 0.0) socRise / 100.0 * capacityKwh else kwh
+}
+
+/**
  * Що відомо про зарядки.
  *
  * ЧОМУ ЛІЧИЛЬНИК, А НЕ ІНТЕГРАЛ. Витрата й рекуперація рахуються інтегралом
@@ -85,11 +116,21 @@ data class ChargeLog(
      */
     val hasBaseline: Boolean = false,
 
+    /**
+     * Журнал завершених зарядок, найновіша перша. Обмежений [MAX_SESSIONS]: цікава
+     * недавня історія, а не весь життєвий цикл батареї.
+     */
+    val sessions: List<ChargeSession> = emptyList(),
+
     /** Прохання від екрана. Не зберігається: живе рівно до наступного читання. */
     val request: ChargeRequest = ChargeRequest.None,
 ) {
     val hasLastSession: Boolean get() = lastSessionKwh > 0.0 || lastSessionSocRise > 0.0
     val hasToday: Boolean get() = todayKwh > 0.0 || todaySocRise > 0.0
+
+    /** Додати завершену зарядку в журнал, обрізавши до [MAX_SESSIONS]. */
+    fun withSession(session: ChargeSession): ChargeLog =
+        copy(sessions = (listOf(session) + sessions).take(MAX_SESSIONS))
 
     /**
      * Скільки це кВт·год за тією самою міркою, якою рахується запас ходу.
@@ -110,6 +151,11 @@ data class ChargeLog(
 
     fun todayEnergyKwh(capacityKwh: Double): Double =
         energyOf(todaySocRise, capacityKwh, todayKwh)
+
+    companion object {
+        /** Скільки зарядок тримати в журналі. П'ятдесят — це місяці історії. */
+        const val MAX_SESSIONS = 50
+    }
 }
 
 /**

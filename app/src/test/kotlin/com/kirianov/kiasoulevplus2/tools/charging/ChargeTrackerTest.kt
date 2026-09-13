@@ -913,6 +913,119 @@ class ChargeTrackerTest {
         assertEquals(log, after)
     }
 
+    // --- ЖУРНАЛ ЗАРЯДОК ---------------------------------------------------------
+
+    /**
+     * Кожна закрита зарядка лягає в журнал: раніше застосунок пам'ятав лише
+     * «останню», і дві зарядки поспіль з'їдали першу.
+     */
+    @Test
+    fun `a closed charge lands in the journal with its cause`() {
+        // Спершу базовий показ на стоячому авто, потім зарядка починається на наших
+        // очах — тоді застосунок знає й час її початку.
+        var log = observe(ChargeLog(), counter = 27_089.0, charging = false, nowMs = HOUR - MINUTE,
+            dischargedKwh = 26_041.4, socPercent = 79.0)
+        log = observe(log, counter = 27_089.2, charging = true, nowMs = HOUR,
+            dischargedKwh = 26_041.4, socPercent = 80.0)
+        log = observe(log, counter = 27_089.5, charging = true, nowMs = HOUR + MINUTE,
+            dischargedKwh = 26_041.4, socPercent = 81.0)
+
+        val after = ChargeTracker.observe(
+            log = log,
+            counterKwh = 27_094.0,
+            dischargedKwh = 26_042.6,
+            socPercent = 90.0,
+            isCharging = false,
+            nowMs = HOUR + 12 * HOUR,
+            dayKey = day,
+            plugged = false,
+        )
+
+        assertEquals(1, after.sessions.size)
+        val session = after.sessions.first()
+        assertEquals(4.8, session.kwh, 0.001)
+        assertEquals(HOUR + 12 * HOUR, session.endedAtMs)
+        assertEquals(HOUR, session.startedAtMs)
+        assertTrue(session.hasStart)
+        assertEquals("роз'єм", session.cause)
+    }
+
+    /** Дві зарядки поспіль — обидві в журналі, найновіша перша. */
+    @Test
+    fun `two charges both stay in the journal newest first`() {
+        var log = observe(ChargeLog(), counter = 100.0, charging = false, nowMs = HOUR)
+        // Перша зарядка.
+        log = observe(log, counter = 100.0, charging = true, nowMs = HOUR + MINUTE)
+        log = observe(log, counter = 104.0, charging = true, nowMs = HOUR + 2 * MINUTE)
+        log = ChargeTracker.observe(log, 104.0, 20_000.0, 60.0, false,
+            HOUR + 3 * MINUTE, day, plugged = false)
+        // Друга зарядка, набагато пізніше — щоб не продовжити першу.
+        val later = HOUR + 20 * HOUR
+        log = observe(log, counter = 104.0, charging = true, nowMs = later)
+        log = observe(log, counter = 110.0, charging = true, nowMs = later + MINUTE)
+        log = ChargeTracker.observe(log, 110.0, 20_000.0, 70.0, false,
+            later + 2 * MINUTE, day, plugged = false)
+
+        assertEquals(2, log.sessions.size)
+        assertEquals("Найновіша перша", 6.0, log.sessions[0].kwh, 0.001)
+        assertEquals(4.0, log.sessions[1].kwh, 0.001)
+    }
+
+    /** Зарядка без телефона теж лягає в журнал — тільки без часу початку. */
+    @Test
+    fun `a charge seen only in the morning lands in the journal without a start`() {
+        val evening = observe(ChargeLog(), counter = 27_000.0, charging = false, nowMs = HOUR,
+            dischargedKwh = 26_000.0, socPercent = 20.0)
+        val morning = observe(evening, counter = 27_038.0, charging = false,
+            nowMs = HOUR + 10 * HOUR, dischargedKwh = 26_000.0, socPercent = 95.0)
+
+        assertEquals(1, morning.sessions.size)
+        val session = morning.sessions.first()
+        assertEquals(38.0, session.kwh, 0.001)
+        assertEquals("Початку не бачили", 0L, session.startedAtMs)
+        assertFalse(session.hasStart)
+    }
+
+    /** Порожня сесія (наш власний обрив) у журнал не потрапляє. */
+    @Test
+    fun `an empty session leaves no journal entry`() {
+        val longAgo = HOUR
+        val now = longAgo + 12 * HOUR
+        var log = observe(ChargeLog(), counter = 27_000.0, charging = false, nowMs = longAgo)
+        log = observe(log, counter = 27_000.0, charging = true, nowMs = now)
+        val after = observe(log, counter = 27_000.0, charging = false, nowMs = now + MINUTE)
+
+        assertTrue("Обрив без приросту — не зарядка", after.sessions.isEmpty())
+    }
+
+    /** Ручне «кінець зарядки» теж лишає слід у журналі. */
+    @Test
+    fun `the manual finish records a journal entry`() {
+        var log = observe(ChargeLog(), counter = 27_089.2, charging = true, nowMs = HOUR,
+            dischargedKwh = 26_041.4, socPercent = 80.0)
+        log = observe(log, counter = 27_089.5, charging = true, nowMs = HOUR + MINUTE,
+            dischargedKwh = 26_041.4, socPercent = 80.5)
+
+        val after = ChargeTracker.finishManually(log, 27_094.0, 26_041.9, 95.0,
+            HOUR + 12 * HOUR, day)
+
+        assertEquals(1, after.sessions.size)
+        assertEquals("вручну", after.sessions.first().cause)
+        assertEquals(4.8, after.sessions.first().kwh, 0.001)
+    }
+
+    /** Журнал обрізається до межі, а не росте без кінця. */
+    @Test
+    fun `the journal is capped`() {
+        var log = ChargeLog()
+        repeat(ChargeLog.MAX_SESSIONS + 5) {
+            log = log.withSession(
+                com.kirianov.kiasoulevplus2.Data.ChargeSession(1.0, 1.0, 0L, 1L, "тест"),
+            )
+        }
+        assertEquals(ChargeLog.MAX_SESSIONS, log.sessions.size)
+    }
+
     private companion object {
         const val MINUTE = 60 * 1000L
         const val HOUR = 60 * MINUTE

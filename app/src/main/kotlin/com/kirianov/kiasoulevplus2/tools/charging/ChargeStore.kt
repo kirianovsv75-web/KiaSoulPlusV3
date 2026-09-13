@@ -16,6 +16,7 @@
 package com.kirianov.kiasoulevplus2.tools.charging
 
 import com.kirianov.kiasoulevplus2.Data.ChargeLog
+import com.kirianov.kiasoulevplus2.Data.ChargeSession
 import com.kirianov.kiasoulevplus2.tools.json.MiniJson
 import com.kirianov.kiasoulevplus2.tools.paths.CarDataStore
 import com.kirianov.kiasoulevplus2.tools.paths.CarPaths
@@ -140,6 +141,14 @@ class FileChargeStore(private val root: File) : ChargeStore, CarDataStore {
             "lastSeenAtMs" to log.lastSeenAtMs.toDouble(),
             "lastDecision" to log.lastDecision,
             "hasBaseline" to log.hasBaseline,
+            // Журнал зарядок — колонками, а не вкладеними об'єктами: MiniJson їх не
+            // має й навмисно, тож кожне поле сесії лежить своїм масивом рівної
+            // довжини, і на читанні вони зшиваються назад за індексом.
+            "sessionsKwh" to log.sessions.map { it.kwh },
+            "sessionsSocRise" to log.sessions.map { it.socRise },
+            "sessionsStartedAtMs" to log.sessions.map { it.startedAtMs.toDouble() },
+            "sessionsEndedAtMs" to log.sessions.map { it.endedAtMs.toDouble() },
+            "sessionsCause" to log.sessions.map { it.cause },
         ),
     )
 
@@ -160,7 +169,30 @@ class FileChargeStore(private val root: File) : ChargeStore, CarDataStore {
             lastSeenAtMs = (values["lastSeenAtMs"] as? Double ?: 0.0).toLong(),
             lastDecision = values["lastDecision"] as? String ?: "",
             hasBaseline = values["hasBaseline"] as? Boolean ?: false,
+            sessions = decodeSessions(values),
         )
+    }
+
+    /**
+     * Зшити колонки журналу назад у список сесій. Провідна колонка — кВт·год;
+     * решта беруться за тим самим індексом, а чого бракує (старий файл без
+     * котроїсь колонки) — заповнюється нулем чи порожнім рядком.
+     */
+    private fun decodeSessions(values: Map<String, Any?>): List<ChargeSession> {
+        val kwh = values["sessionsKwh"] as? List<*> ?: return emptyList()
+        val socRise = values["sessionsSocRise"] as? List<*> ?: emptyList<Any?>()
+        val started = values["sessionsStartedAtMs"] as? List<*> ?: emptyList<Any?>()
+        val ended = values["sessionsEndedAtMs"] as? List<*> ?: emptyList<Any?>()
+        val cause = values["sessionsCause"] as? List<*> ?: emptyList<Any?>()
+        return kwh.indices.map { i ->
+            ChargeSession(
+                kwh = kwh[i] as? Double ?: 0.0,
+                socRise = socRise.getOrNull(i) as? Double ?: 0.0,
+                startedAtMs = (started.getOrNull(i) as? Double ?: 0.0).toLong(),
+                endedAtMs = (ended.getOrNull(i) as? Double ?: 0.0).toLong(),
+                cause = cause.getOrNull(i) as? String ?: "",
+            )
+        }
     }
 
     private companion object {

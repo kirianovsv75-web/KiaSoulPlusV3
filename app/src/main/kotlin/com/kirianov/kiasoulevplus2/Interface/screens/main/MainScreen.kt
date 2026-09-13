@@ -31,6 +31,7 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kirianov.kiasoulevplus2.Data.BmsData
 import com.kirianov.kiasoulevplus2.Data.CalculatedData
 import com.kirianov.kiasoulevplus2.Data.ChargeLog
+import com.kirianov.kiasoulevplus2.Data.ChargeSession
 import com.kirianov.kiasoulevplus2.Data.ChargingState
 import com.kirianov.kiasoulevplus2.Data.GeneralData
 import com.kirianov.kiasoulevplus2.Data.ConnectionState
@@ -326,6 +327,21 @@ private fun ChargeCard(
                 MetricRow("Рішення", charge.lastDecision)
             }
 
+            // ЖУРНАЛ ЗАРЯДОК. Раніше застосунок пам'ятав лише «останню»: дві зарядки
+            // поспіль — і перша зникала. Тепер вони лежать поряд, найновіша зверху,
+            // із часом, енергією, приростом заряду й тим, чим сесію закрито.
+            if (charge.sessions.isNotEmpty()) {
+                val now = System.currentTimeMillis()
+                Text(
+                    text = "Журнал зарядок",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+                charge.sessions.forEach { session ->
+                    ChargeSessionRow(session = session, packKwh = packKwh, nowMs = now)
+                }
+            }
+
             Text(
                 text = "Головне число — приріст заряду на корисну ємність пакета: саме " +
                     "воно зійшлося з настінником. Лічильник BMS показано поруч, і він " +
@@ -476,6 +492,43 @@ private fun MetricRow(label: String, value: String) {
     ) {
         Text(text = label, fontSize = 16.sp)
         Text(text = value, fontSize = 16.sp, style = MaterialTheme.typography.titleMedium)
+    }
+}
+
+/**
+ * Один рядок журналу зарядок: коли й скільки, а нижче дрібним — приріст заряду й
+ * чим сесію закрито. Головне число — за корисною ємністю, як і всюди в картці.
+ * Час відносний ([formatAgo]), бо годинник авто збитий, а дата з телефона поруч
+ * із даними машини лише плутала б.
+ */
+@Composable
+private fun ChargeSessionRow(session: ChargeSession, packKwh: Double, nowMs: Long) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text(
+                text = if (session.endedAtMs > 0L) formatAgo(nowMs - session.endedAtMs) else "--",
+                fontSize = 15.sp,
+            )
+            Text(
+                text = formatMeasurement(session.energyKwh(packKwh), 1, "кВт·год"),
+                fontSize = 15.sp,
+                style = MaterialTheme.typography.titleMedium,
+            )
+        }
+        val subtitle = buildList {
+            if (session.socRise > 0.0) add("+${formatDecimal(session.socRise, 1)} %")
+            if (session.cause.isNotEmpty()) add(session.cause)
+        }.joinToString(" · ")
+        if (subtitle.isNotEmpty()) {
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 
