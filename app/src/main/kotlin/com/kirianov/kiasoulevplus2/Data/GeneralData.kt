@@ -269,7 +269,50 @@ object GeneralData {
     fun beginCarIdentification() =
         _state.update {
             it.copy(
-                garage = it.garage.copy(vinConfirmed = false, vinPending = true, detectedVin = ""),
+                garage = it.garage.copy(
+                    vinConfirmed = false,
+                    vinConfirmedByContinuity = false,
+                    vinPending = true,
+                    detectedVin = "",
+                ),
+            )
+        }
+
+    /**
+     * VIN промовчав, але лічильники й пробіг продовжують активне авто — впізнаємо
+     * його за неперервністю. Пише блок гаража; див. [com.kirianov.kiasoulevplus2.tools.garage.CarIdentity].
+     */
+    fun confirmCarByContinuity() =
+        _state.update {
+            it.copy(
+                garage = it.garage.copy(
+                    vinConfirmedByContinuity = true,
+                    vinNote = "впізнано за лічильниками (VIN мовчить)",
+                ),
+            )
+        }
+
+    /** Оновити «відбиток» активного авто: пробіг і лічильники, якими воно скінчило. */
+    fun updateCarFingerprint(odometerKm: Double, kwhIn: Double, kwhOut: Double) =
+        _state.update { state ->
+            val vin = state.garage.activeVin
+            if (vin.isEmpty()) return@update state
+            state.copy(
+                garage = state.garage.copy(
+                    cars = state.garage.cars.map { car ->
+                        if (car.vin != vin) {
+                            car
+                        } else {
+                            // Ніколи не назад: лічильники й пробіг не зменшуються, а
+                            // хибне читання не має псувати відбиток.
+                            car.copy(
+                                lastOdometerKm = maxOf(car.lastOdometerKm, odometerKm),
+                                lastKwhIn = maxOf(car.lastKwhIn, kwhIn),
+                                lastKwhOut = maxOf(car.lastKwhOut, kwhOut),
+                            )
+                        }
+                    },
+                ),
             )
         }
 

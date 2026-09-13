@@ -1,9 +1,11 @@
 package com.kirianov.kiasoulevplus2.tools.garage
 
+import com.kirianov.kiasoulevplus2.Data.BmsData
 import com.kirianov.kiasoulevplus2.Data.CarProfile
 import com.kirianov.kiasoulevplus2.Data.Garage
 import com.kirianov.kiasoulevplus2.Data.ConnectionState
 import com.kirianov.kiasoulevplus2.Data.GeneralData
+import com.kirianov.kiasoulevplus2.Data.VehicleData
 import com.kirianov.kiasoulevplus2.Data.Pack
 import com.kirianov.kiasoulevplus2.tools.charging.FileChargeStore
 import com.kirianov.kiasoulevplus2.Data.ChargeLog
@@ -327,5 +329,130 @@ class GarageTest {
         assertEquals(50.88, garage.cars.first { it.vin == vin }.packKwh, 0.001)
         assertEquals("1960", garage.cars.first { it.vin == other }.name)
         assertEquals(27.0, garage.cars.first { it.vin == other }.packKwh, 0.001)
+    }
+
+    /**
+     * VIN ПРОМОВЧАВ, А АВТО ВСЕ ОДНО ВПІЗНАНЕ ЗА НЕПЕРЕРВНІСТЮ — і це виправлення
+     * бага, через який прогноз відпав. З кількома авто в гаражі мовчазний VIN лишав
+     * `car=?` і вимикав навчання. Тепер активне авто впізнається за тим, що живі
+     * пробіг і лічильники плавно його продовжують.
+     */
+    @Test
+    fun `a silent vin is identified by continuous counters`() {
+        GarageBlock(MemoryStore()).start(scope)
+        GeneralData.updateGarage {
+            it.copy(
+                cars = listOf(
+                    CarProfile(vin = vin, lastOdometerKm = 1_000.0, lastKwhIn = 500.0, lastKwhOut = 400.0),
+                    CarProfile(vin = other),
+                ),
+                activeVin = vin,
+                loaded = true,
+            )
+        }
+        GeneralData.updateConnection(ConnectionState.Connected, "тест")
+        // Питали VIN — не почули.
+        GeneralData.beginCarIdentification()
+        GeneralData.noteVinFailure("немає відповіді")
+        assertFalse("Поки чисел немає — не впізнане", GeneralData.state.value.garage.identified)
+
+        // Живі числа плавно продовжують активне авто.
+        GeneralData.updateBms(
+            BmsData(
+                displaySoc = 55.0,
+                cumulativeEnergyChargedKwh = 505.0,
+                cumulativeEnergyDischargedKwh = 404.0,
+            ),
+        )
+        GeneralData.updateVehicle(VehicleData(odometerKm = 1_010.0))
+
+        val garage = GeneralData.state.value.garage
+        assertTrue("Впізнане за неперервністю", garage.identified)
+        assertTrue(garage.vinConfirmedByContinuity)
+        assertTrue("Навчання знову дозволене", GeneralData.state.value.carLearning)
+    }
+
+    /** А чужа батарея неперервність не складає: лишаємось при `car=?`. */
+    @Test
+    fun `a foreign battery is not identified by continuity`() {
+        GarageBlock(MemoryStore()).start(scope)
+        GeneralData.updateGarage {
+            it.copy(
+                cars = listOf(
+                    CarProfile(vin = vin, lastOdometerKm = 1_000.0, lastKwhIn = 500.0, lastKwhOut = 400.0),
+                    CarProfile(vin = other),
+                ),
+                activeVin = vin,
+                loaded = true,
+            )
+        }
+        GeneralData.updateConnection(ConnectionState.Connected, "тест")
+        GeneralData.beginCarIdentification()
+        GeneralData.noteVinFailure("немає відповіді")
+
+        // Інші абсолютні лічильники — це не наше авто.
+        GeneralData.updateBms(
+            BmsData(
+                displaySoc = 55.0,
+                cumulativeEnergyChargedKwh = 9_000.0,
+                cumulativeEnergyDischargedKwh = 8_000.0,
+            ),
+        )
+        GeneralData.updateVehicle(VehicleData(odometerKm = 1_020.0))
+
+        assertFalse("Чужу не впізнаємо", GeneralData.state.value.garage.identified)
+    }
+
+    /** Поки авто впізнане, його відбиток тримається свіжим для наступного разу. */
+    @Test
+    fun `the fingerprint is kept fresh while identified`() {
+        GarageBlock(MemoryStore()).start(scope)
+        // Одне авто — впізнане завжди, тож відбиток можна знімати одразу.
+        GeneralData.updateGarage {
+            it.copy(cars = listOf(CarProfile(vin = vin)), activeVin = vin, loaded = true)
+        }
+        GeneralData.updateConnection(ConnectionState.Connected, "тест")
+        GeneralData.updateBms(
+            BmsData(
+                displaySoc = 55.0,
+                cumulativeEnergyChargedKwh = 505.0,
+                cumulativeEnergyDischargedKwh = 404.0,
+            ),
+        )
+        GeneralData.updateVehicle(VehicleData(odometerKm = 1_010.0))
+
+        val car = GeneralData.state.value.garage.active
+        assertEquals(1_010.0, car.lastOdometerKm, 0.001)
+        assertEquals(505.0, car.lastKwhIn, 0.001)
+        assertEquals(404.0, car.lastKwhOut, 0.001)
+    }
+
+    /** Відбиток переживає перезапис на диск. */
+    @Test
+    fun `the fingerprint survives a store round trip`() {
+        val root = directory()
+        try {
+            val store = FileGarageStore(root)
+            store.save(
+                Garage(
+                    activeVin = vin,
+                    cars = listOf(
+                        CarProfile(
+                            vin = vin,
+                            lastOdometerKm = 190_838.0,
+                            lastKwhIn = 27_444.9,
+                            lastKwhOut = 26_413.3,
+                        ),
+                    ),
+                ),
+            )
+
+            val car = store.load()!!.cars.single()
+            assertEquals(190_838.0, car.lastOdometerKm, 0.001)
+            assertEquals(27_444.9, car.lastKwhIn, 0.001)
+            assertEquals(26_413.3, car.lastKwhOut, 0.001)
+        } finally {
+            root.deleteRecursively()
+        }
     }
 }

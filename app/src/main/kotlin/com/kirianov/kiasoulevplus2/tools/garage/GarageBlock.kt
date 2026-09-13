@@ -66,9 +66,55 @@ class GarageBlock(
             GeneralData.updateGarage { (store.load() ?: Garage()).copy(loaded = true) }
             adoptDetected(scope)
             deleteRequested(scope)
+            trackIdentity(scope)
             persist(scope)
         }
     }
+
+    /**
+     * Другий свідок особи авто, окрім VIN: неперервність пробігу й лічильників.
+     *
+     * Поки авто впізнане, тримаємо його «відбиток» свіжим. Коли VIN промовчав, а
+     * машин у гаражі кілька — намагаємось упізнати активне авто за тим відбитком:
+     * якщо живі числа плавно його продовжують, це воно, і навчання з прогнозом не
+     * відпадають. Чужа батарея неперервність не складе — див. [CarIdentity].
+     */
+    private fun trackIdentity(scope: CoroutineScope) {
+        GeneralData.state
+            .onEach { state ->
+                if (!state.isConnected || !state.bms.hasData) return@onEach
+                val odometerKm = state.vehicle.odometerKm
+                val kwhIn = state.bms.cumulativeEnergyChargedKwh
+                val kwhOut = state.bms.cumulativeEnergyDischargedKwh
+                // Без пробігу й лічильника відбиток ні зняти, ні звірити.
+                if (odometerKm <= 0.0 || kwhIn <= 0.0) return@onEach
+
+                val garage = state.garage
+                val active = garage.active
+
+                if (garage.identified) {
+                    if (grewEnough(active, odometerKm, kwhIn, kwhOut)) {
+                        GeneralData.updateCarFingerprint(odometerKm, kwhIn, kwhOut)
+                    }
+                    return@onEach
+                }
+
+                // Не впізнане, але VIN уже спитали й не почули, машин кілька, і на
+                // шині не інше відоме авто — пробуємо неперервність.
+                if (!garage.mismatched && !garage.vinPending && garage.cars.size > 1 &&
+                    CarIdentity.continues(active, odometerKm, kwhIn, kwhOut)
+                ) {
+                    GeneralData.confirmCarByContinuity()
+                }
+            }
+            .launchIn(scope)
+    }
+
+    /** Чи виріс відбиток настільки, що варто його переписати (щоб не смикати диск щосекунди). */
+    private fun grewEnough(car: CarProfile, odometerKm: Double, kwhIn: Double, kwhOut: Double): Boolean =
+        odometerKm - car.lastOdometerKm >= FINGERPRINT_STEP_KM ||
+            kwhIn - car.lastKwhIn >= FINGERPRINT_STEP_KWH ||
+            kwhOut - car.lastKwhOut >= FINGERPRINT_STEP_KWH
 
     /**
      * Видалення авто: спершу тека, потім запис у списку.
@@ -155,6 +201,7 @@ class GarageBlock(
                 it.copy(
                     detectedVin = "",
                     vinConfirmed = false,
+                    vinConfirmedByContinuity = false,
                     vinPending = false,
                     share = com.kirianov.kiasoulevplus2.Data.ShareState(),
                 )
@@ -163,5 +210,11 @@ class GarageBlock(
             .drop(1)
             .onEach(store::save)
             .launchIn(scope)
+    }
+
+    private companion object {
+        /** Крок оновлення відбитка: рідше за це диск не турбуємо. */
+        const val FINGERPRINT_STEP_KM = 1.0
+        const val FINGERPRINT_STEP_KWH = 1.0
     }
 }

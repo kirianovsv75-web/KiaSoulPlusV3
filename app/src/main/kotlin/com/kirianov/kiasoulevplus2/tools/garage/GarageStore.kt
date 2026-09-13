@@ -84,6 +84,10 @@ class FileGarageStore(private val root: File) : GarageStore {
             "name" to car.name,
             "packKwh" to car.packKwh,
             "seen" to car.lastSeenAtMs.toDouble(),
+            // Відбиток авто для впізнання за неперервністю, коли VIN мовчить.
+            "odo" to car.lastOdometerKm,
+            "kwhIn" to car.lastKwhIn,
+            "kwhOut" to car.lastKwhOut,
         ),
     )
 
@@ -96,6 +100,9 @@ class FileGarageStore(private val root: File) : GarageStore {
             name = values["name"] as? String ?: "",
             packKwh = values["packKwh"] as? Double ?: 0.0,
             lastSeenAtMs = (values["seen"] as? Double ?: 0.0).toLong(),
+            lastOdometerKm = values["odo"] as? Double ?: 0.0,
+            lastKwhIn = values["kwhIn"] as? Double ?: 0.0,
+            lastKwhOut = values["kwhOut"] as? Double ?: 0.0,
         )
     }
 
