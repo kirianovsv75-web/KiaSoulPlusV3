@@ -1,5 +1,6 @@
 package com.kirianov.kiasoulevplus2.tools.charging
 
+import com.kirianov.kiasoulevplus2.Data.ChargeConnector
 import com.kirianov.kiasoulevplus2.Data.ChargeLog
 import com.kirianov.kiasoulevplus2.Data.ChargeSession
 import java.io.File
@@ -119,9 +120,11 @@ class FileChargeStoreTest {
             hasBaseline = true,
             sessions = listOf(
                 ChargeSession(kwh = 6.0, socRise = 14.0, startedAtMs = 0L,
-                    endedAtMs = 1_788_000_200_000L, cause = "роз'єм"),
+                    endedAtMs = 1_788_000_200_000L, cause = "роз'єм",
+                    connector = ChargeConnector.BOTH),
                 ChargeSession(kwh = 38.0, socRise = 75.0, startedAtMs = 1_788_000_000_000L,
-                    endedAtMs = 1_788_000_100_000L, cause = "пауза без руху"),
+                    endedAtMs = 1_788_000_100_000L, cause = "пауза без руху",
+                    connector = ChargeConnector.CHADEMO),
             ),
         )
 

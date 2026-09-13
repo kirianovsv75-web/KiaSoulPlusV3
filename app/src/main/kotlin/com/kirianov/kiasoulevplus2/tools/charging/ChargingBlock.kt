@@ -70,6 +70,11 @@ class ChargingBlock(
                         // ChargeTracker.observe. Тут він передається як є, разом із
                         // «не знаємо»: жодних припущень замість нього.
                         odometerKm = it.vehicle.odometerKm.takeIf { km -> km > 0.0 },
+                        // Тип роз'єму — прапорці кадру 21 01. Збираються за всю
+                        // сесію, тож передаємо як є: поза зв'язком вони false і типу
+                        // не псують.
+                        chademoPlugged = it.bms.chademoPlugged,
+                        j1772Plugged = it.bms.j1772Plugged,
                         request = it.charge.request,
                         carKnown = it.carAccounting,
                     )
@@ -103,6 +108,8 @@ class ChargingBlock(
                             socPercent = reading.socPercent,
                             nowMs = now,
                             dayKey = day,
+                            chademoPlugged = reading.chademoPlugged,
+                            j1772Plugged = reading.j1772Plugged,
                         )
                         if (finished != log) {
                             log = finished
@@ -123,6 +130,8 @@ class ChargingBlock(
                         ignitionOn = reading.ignitionOn,
                         plugged = reading.plugged,
                         odometerKm = reading.odometerKm,
+                        chademoPlugged = reading.chademoPlugged,
+                        j1772Plugged = reading.j1772Plugged,
                     )
                     if (updated == log) return@collect
 
@@ -145,6 +154,10 @@ class ChargingBlock(
 
         /** Пробіг, км; null — кадр 4F0 ще не приходив. */
         val odometerKm: Double?,
+
+        /** Уставлені роз'єми — прапорці кадру 21 01, для визначення типу зарядки. */
+        val chademoPlugged: Boolean,
+        val j1772Plugged: Boolean,
         val request: ChargeRequest,
 
         /** Чи підтверджено, що числа дає саме активне авто. */

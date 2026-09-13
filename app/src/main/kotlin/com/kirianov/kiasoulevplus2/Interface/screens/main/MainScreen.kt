@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.kirianov.kiasoulevplus2.Data.BmsData
 import com.kirianov.kiasoulevplus2.Data.CalculatedData
+import com.kirianov.kiasoulevplus2.Data.ChargeConnector
 import com.kirianov.kiasoulevplus2.Data.ChargeLog
 import com.kirianov.kiasoulevplus2.Data.ChargeSession
 import com.kirianov.kiasoulevplus2.Data.ChargingState
@@ -87,6 +88,7 @@ fun MainScreen(mainViewModel: MainViewModel = viewModel()) {
         ChargeCard(
             charge = state.charge,
             charging = state.vehicle.charging,
+            bms = bms,
             packKwh = state.garage.active.effectivePackKwh,
             onFinish = GeneralData::requestChargeFinish,
         )
@@ -255,6 +257,7 @@ private fun CellsCard(calculated: CalculatedData) {
 private fun ChargeCard(
     charge: ChargeLog,
     charging: ChargingState,
+    bms: BmsData,
     packKwh: Double,
     onFinish: () -> Unit,
 ) {
@@ -286,6 +289,19 @@ private fun ChargeCard(
                     "Зараз прийнято",
                     formatMeasurement(charge.sessionEnergyKwh(packKwh), 1, "кВт·год"),
                 )
+                // Жива швидкість і струм: потужність = напруга × струм. Струм на
+                // зарядці додатний (у батарею); знак уже виправлено в декодері.
+                if (bms.hasData) {
+                    MetricRow(
+                        "Швидкість зараз",
+                        formatMeasurement(bms.batteryVoltage * bms.batteryCurrent / 1000.0, 1, "кВт"),
+                    )
+                    MetricRow("Струм", formatMeasurement(bms.batteryCurrent, 1, "А"))
+                }
+                val liveConnector = ChargeConnector.of(bms.j1772Plugged, bms.chademoPlugged)
+                if (liveConnector != ChargeConnector.UNKNOWN) {
+                    MetricRow("Тип", liveConnector.label)
+                }
             }
 
             MetricRow(
@@ -519,7 +535,10 @@ private fun ChargeSessionRow(session: ChargeSession, packKwh: Double, nowMs: Lon
             )
         }
         val subtitle = buildList {
+            add(session.connector.label)
             if (session.socRise > 0.0) add("+${formatDecimal(session.socRise, 1)} %")
+            session.averageKw(packKwh)?.let { add("~${formatDecimal(it, 1)} кВт") }
+            if (session.durationMs > 0L) add(formatDuration(session.durationMs))
             if (session.cause.isNotEmpty()) add(session.cause)
         }.joinToString(" · ")
         if (subtitle.isNotEmpty()) {

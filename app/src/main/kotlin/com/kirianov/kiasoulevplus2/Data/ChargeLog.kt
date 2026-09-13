@@ -1,6 +1,39 @@
 package com.kirianov.kiasoulevplus2.Data
 
 /**
+ * Яким роз'ємом ішла зарядка.
+ *
+ * Джерело — прапорці кадру 21 01 (байт 11): [BmsData.j1772Plugged] для Type 1 і
+ * [BmsData.chademoPlugged] для CHAdeMO. Читаються щосекунди й працюють однаково на
+ * змінному та постійному струмі. Тип збирається ЗА ВСЮ СЕСІЮ, а не в мить кінця:
+ * бувало, що заряд почали на швидкій, а докінчували на повільній — тоді за сесію
+ * засвітилися обидва, і це [BOTH].
+ *
+ * [UNKNOWN] — зарядку зарахували за приростом заряду без телефона, роз'єму так і не
+ * побачили: чесніше сказати «невідомо», ніж вгадати.
+ */
+enum class ChargeConnector {
+    UNKNOWN, TYPE1, CHADEMO, BOTH;
+
+    val label: String
+        get() = when (this) {
+            TYPE1 -> "Type 1"
+            CHADEMO -> "CHAdeMO"
+            BOTH -> "Type 1 / CHAdeMO"
+            UNKNOWN -> "невідомо"
+        }
+
+    companion object {
+        fun of(sawType1: Boolean, sawChademo: Boolean): ChargeConnector = when {
+            sawType1 && sawChademo -> BOTH
+            sawChademo -> CHADEMO
+            sawType1 -> TYPE1
+            else -> UNKNOWN
+        }
+    }
+}
+
+/**
  * Одна ЗАВЕРШЕНА зарядка в журналі.
  *
  * Раніше застосунок пам'ятав лише «останню» й «за добу»: варто було статися двом
@@ -22,13 +55,28 @@ data class ChargeSession(
     val startedAtMs: Long,
     val endedAtMs: Long,
     val cause: String,
+    val connector: ChargeConnector = ChargeConnector.UNKNOWN,
 ) {
     /** Чи знаємо, коли зарядка почалася: без цього тривалість і середню не порахувати. */
     val hasStart: Boolean get() = startedAtMs > 0L && endedAtMs > startedAtMs
 
+    /** Тривалість зарядки, мс, або 0 — коли початку не бачили. */
+    val durationMs: Long get() = if (hasStart) endedAtMs - startedAtMs else 0L
+
     /** Скільки це кВт·год за тією самою міркою, якою рахується запас ходу. */
     fun energyKwh(capacityKwh: Double): Double =
         if (socRise > 0.0 && capacityKwh > 0.0) socRise / 100.0 * capacityKwh else kwh
+
+    /**
+     * Середня швидкість зарядки, кВт, або null — коли часу початку немає (зарядку
+     * побачили лише зранку) і рахувати нема від чого.
+     */
+    fun averageKw(capacityKwh: Double): Double? {
+        if (!hasStart) return null
+        val hours = durationMs / 3_600_000.0
+        if (hours <= 0.0) return null
+        return energyKwh(capacityKwh) / hours
+    }
 }
 
 /**
@@ -100,6 +148,14 @@ data class ChargeLog(
     val socBaselinePercent: Double = 0.0,
     val odometerBaselineKm: Double = 0.0,
     val lastSeenAtMs: Long = 0L,
+
+    /**
+     * Які роз'єми засвітилися за ПОТОЧНУ сесію. Збираються, поки зарядка триває, і
+     * скидаються на її закритті: тип сесії — це те, що бачили за весь її час, а не
+     * в останню мить (заряд могли почати на CHAdeMO, а докінчити на Type 1).
+     */
+    val sessionSawType1: Boolean = false,
+    val sessionSawChademo: Boolean = false,
 
     /**
      * Чому останню паузу зарахували або не зарахували як зарядку.

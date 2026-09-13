@@ -60,6 +60,7 @@
 
 package com.kirianov.kiasoulevplus2.tools.charging
 
+import com.kirianov.kiasoulevplus2.Data.ChargeConnector
 import com.kirianov.kiasoulevplus2.Data.ChargeLog
 import com.kirianov.kiasoulevplus2.Data.ChargeSession
 
@@ -195,6 +196,13 @@ object ChargeTracker {
          * шкала може зрушити менше за поріг, і зарядка все одно була.
          */
         odometerKm: Double? = null,
+        /**
+         * Які роз'єми зараз уставлені — прапорці кадру 21 01. Збираються за всю
+         * сесію (OR крок за кроком), бо тип зарядки — це те, що бачили за весь її
+         * час: заряд могли почати на CHAdeMO, а докінчити на Type 1.
+         */
+        chademoPlugged: Boolean = false,
+        j1772Plugged: Boolean = false,
     ): ChargeLog {
         if (counterKwh <= 0.0) return log
 
@@ -226,6 +234,9 @@ object ChargeTracker {
                 lastSeenAtMs = nowMs,
                 hasBaseline = true,
                 charging = isCharging,
+                // Якщо перше ж читання застало зарядку — засіваємо тип уже тут.
+                sessionSawType1 = isCharging && j1772Plugged,
+                sessionSawChademo = isCharging && chademoPlugged,
             )
         }
 
@@ -256,6 +267,8 @@ object ChargeTracker {
                 missedKwh = verdict.kwh ?: 0.0,
                 missedSocRise = verdict.socRise,
                 cause = verdict.cause,
+                sawType1 = rolled.sessionSawType1 || j1772Plugged,
+                sawChademo = rolled.sessionSawChademo || chademoPlugged,
                 dayKey = dayKey,
             )
         }
@@ -263,7 +276,8 @@ object ChargeTracker {
         // Щойно почалася зарядка: беремо новий базовий показ і НЕ нараховуємо цю
         // різницю — у ній сидить рекуперація за поїздку до зарядки.
         if (!rolled.charging) {
-            return started(rolled, counterKwh, dischargedKwh, socPercent, nowMs, odometerKm)
+            return started(rolled, counterKwh, dischargedKwh, socPercent, nowMs, odometerKm,
+                chademoPlugged, j1772Plugged)
         }
 
         // Лічильник не може зменшитись. Якщо зменшився — перед нами інша батарея
@@ -277,9 +291,15 @@ object ChargeTracker {
                 dischargedBaselineKwh = dischargedKwh,
                 socBaselinePercent = socPercent,
                 lastSeenAtMs = nowMs,
+                sessionSawType1 = rolled.sessionSawType1 || j1772Plugged,
+                sessionSawChademo = rolled.sessionSawChademo || chademoPlugged,
             )
         }
-        if (step == 0.0) return rolled.copy(lastSeenAtMs = nowMs)
+        if (step == 0.0) return rolled.copy(
+            lastSeenAtMs = nowMs,
+            sessionSawType1 = rolled.sessionSawType1 || j1772Plugged,
+            sessionSawChademo = rolled.sessionSawChademo || chademoPlugged,
+        )
 
         // ПРИРІСТ ЗАРЯДУ НАБИРАЄТЬСЯ ПОРУЧ ІЗ ЛІЧИЛЬНИКОМ, крок за кроком. Не
         // «кінець мінус початок»: базовий показ переставляється щоразу, і різниця
@@ -297,6 +317,8 @@ object ChargeTracker {
             sessionSocRise = rolled.sessionSocRise + socStep,
             todayKwh = rolled.todayKwh + step,
             todaySocRise = rolled.todaySocRise + socStep,
+            sessionSawType1 = rolled.sessionSawType1 || j1772Plugged,
+            sessionSawChademo = rolled.sessionSawChademo || chademoPlugged,
             dayKey = dayKey,
         )
     }
@@ -451,6 +473,8 @@ object ChargeTracker {
         socPercent: Double,
         nowMs: Long,
         dayKey: String,
+        chademoPlugged: Boolean = false,
+        j1772Plugged: Boolean = false,
     ): ChargeLog {
         if (counterKwh <= 0.0 || !log.hasBaseline) return log
         val rolled = rollDay(log, dayKey)
@@ -462,6 +486,10 @@ object ChargeTracker {
         if (total <= 0.0 && totalSocRise <= 0.0) {
             return rolled.copy(lastDecision = "вручну: рахувати нема чого")
         }
+        val connector = ChargeConnector.of(
+            rolled.sessionSawType1 || j1772Plugged,
+            rolled.sessionSawChademo || chademoPlugged,
+        )
         return rolled.copy(
             charging = false,
             lastSessionKwh = total,
@@ -473,6 +501,8 @@ object ChargeTracker {
             sessionKwh = 0.0,
             sessionSocRise = 0.0,
             sessionStartedAtMs = 0L,
+            sessionSawType1 = false,
+            sessionSawChademo = false,
             counterBaselineKwh = counterKwh,
             dischargedBaselineKwh = dischargedKwh,
             socBaselinePercent = socPercent,
@@ -549,6 +579,8 @@ object ChargeTracker {
         socPercent: Double,
         nowMs: Long,
         odometerKm: Double?,
+        chademoPlugged: Boolean,
+        j1772Plugged: Boolean,
     ): ChargeLog {
         val continuing = nowMs - log.lastSessionEndedAtMs < SESSION_GAP_MS && log.lastSessionEndedAtMs > 0L
 
@@ -567,7 +599,30 @@ object ChargeTracker {
         val carried = if (continuing) maxOf(log.sessionKwh, log.lastSessionKwh) else 0.0
         val carriedSoc = if (continuing) maxOf(log.sessionSocRise, log.lastSessionSocRise) else 0.0
 
+        // ЖУРНАЛ НЕ РОЗСИПАЄТЬСЯ НА ШМАТКИ. Те саме блимання ознаки 581, що колись
+        // з'їдало нічну зарядку, тепер лишило б у журналі кілька обривків однієї
+        // зарядки. Тому при продовженні знімаємо з журналу запис, який зараз
+        // відновлюється (той, чий кінець збігається з lastSessionEndedAtMs), —
+        // кінцеве закриття допише сесію цілою.
+        val resumed = if (continuing) {
+            log.sessions.firstOrNull()?.takeIf { it.endedAtMs == log.lastSessionEndedAtMs }
+        } else {
+            null
+        }
+        val sessions = if (resumed != null) log.sessions.drop(1) else log.sessions
+
+        // Тип і час початку продовженої сесії теж не губимо: відновлюємо з
+        // відкладеного запису й дописуємо поточний роз'єм.
+        val prevType1 = resumed?.connector == ChargeConnector.TYPE1 || resumed?.connector == ChargeConnector.BOTH
+        val prevChademo = resumed?.connector == ChargeConnector.CHADEMO || resumed?.connector == ChargeConnector.BOTH
+        val startedAt = when {
+            resumed != null && resumed.startedAtMs > 0L -> resumed.startedAtMs
+            continuing && log.sessionStartedAtMs > 0L -> log.sessionStartedAtMs
+            else -> nowMs
+        }
+
         return log.copy(
+            sessions = sessions,
             counterBaselineKwh = counterKwh,
             dischargedBaselineKwh = dischargedKwh,
             socBaselinePercent = socPercent,
@@ -576,7 +631,9 @@ object ChargeTracker {
             charging = true,
             sessionKwh = carried,
             sessionSocRise = carriedSoc,
-            sessionStartedAtMs = if (continuing && log.sessionStartedAtMs > 0L) log.sessionStartedAtMs else nowMs,
+            sessionStartedAtMs = startedAt,
+            sessionSawType1 = j1772Plugged || prevType1,
+            sessionSawChademo = chademoPlugged || prevChademo,
         )
     }
 
@@ -594,10 +651,13 @@ object ChargeTracker {
         missedKwh: Double,
         missedSocRise: Double,
         cause: String,
+        sawType1: Boolean,
+        sawChademo: Boolean,
         dayKey: String,
     ): ChargeLog {
         val total = log.sessionKwh + missedKwh
         val totalSocRise = log.sessionSocRise + missedSocRise
+        val connector = ChargeConnector.of(sawType1, sawChademo)
         val closed = when {
             // ПОРОЖНЯ СЕСІЯ НЕ МАЄ ПРАВА СТАТИ «ОСТАННЬОЮ ЗАРЯДКОЮ», і це
             // виправлення дорогої дурниці, яку видно в живому журналі.
@@ -614,6 +674,8 @@ object ChargeTracker {
                 sessionKwh = 0.0,
                 sessionSocRise = 0.0,
                 sessionStartedAtMs = 0L,
+                sessionSawType1 = false,
+                sessionSawChademo = false,
             )
 
             // Сесія була відкрита. Усе, що набігло за час нашої відсутності,
@@ -631,6 +693,8 @@ object ChargeTracker {
                 sessionKwh = 0.0,
                 sessionSocRise = 0.0,
                 sessionStartedAtMs = 0L,
+                sessionSawType1 = false,
+                sessionSawChademo = false,
             ).withSession(
                 ChargeSession(
                     kwh = total,
@@ -640,6 +704,7 @@ object ChargeTracker {
                     // Порожня причина — це коли зникла сама ознака заряджання (581),
                     // а роз'єм і запалювання нічого не сказали: підписуємо чесно.
                     cause = cause.ifEmpty { CAUSE_STOPPED },
+                    connector = connector,
                 ),
             )
             // Зарядка пройшла без нас цілком: записуємо її як завершену. Часу
@@ -659,6 +724,9 @@ object ChargeTracker {
                     startedAtMs = 0L,
                     endedAtMs = nowMs,
                     cause = cause,
+                    // Зарядку без телефона зарахували за приростом заряду — роз'єму
+                    // не бачили, тож тип чесно невідомий.
+                    connector = connector,
                 ),
             )
             else -> log

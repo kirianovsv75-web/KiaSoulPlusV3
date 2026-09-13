@@ -1,8 +1,10 @@
 package com.kirianov.kiasoulevplus2.tools.charging
 
+import com.kirianov.kiasoulevplus2.Data.ChargeConnector
 import com.kirianov.kiasoulevplus2.Data.ChargeLog
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -1012,6 +1014,116 @@ class ChargeTrackerTest {
         assertEquals(1, after.sessions.size)
         assertEquals("вручну", after.sessions.first().cause)
         assertEquals(4.8, after.sessions.first().kwh, 0.001)
+    }
+
+    // --- ТИП РОЗ'ЄМУ ------------------------------------------------------------
+
+    /** Type 1: за сесію бачили лише повільний роз'єм. */
+    @Test
+    fun `a type 1 charge is tagged type 1`() {
+        var log = ChargeTracker.observe(ChargeLog(), 100.0, 20_000.0, 40.0, false, HOUR, day)
+        log = ChargeTracker.observe(log, 100.0, 20_000.0, 40.0, true, HOUR + MINUTE, day,
+            j1772Plugged = true)
+        log = ChargeTracker.observe(log, 104.0, 20_000.0, 50.0, true, HOUR + 2 * MINUTE, day,
+            j1772Plugged = true)
+        log = ChargeTracker.observe(log, 104.0, 20_000.0, 50.0, false, HOUR + 3 * MINUTE, day,
+            plugged = false)
+
+        assertEquals(ChargeConnector.TYPE1, log.sessions.first().connector)
+    }
+
+    /** CHAdeMO: за сесію бачили лише швидкий роз'єм. */
+    @Test
+    fun `a chademo charge is tagged chademo`() {
+        var log = ChargeTracker.observe(ChargeLog(), 100.0, 20_000.0, 40.0, false, HOUR, day)
+        log = ChargeTracker.observe(log, 100.0, 20_000.0, 40.0, true, HOUR + MINUTE, day,
+            chademoPlugged = true)
+        log = ChargeTracker.observe(log, 110.0, 20_000.0, 55.0, true, HOUR + 2 * MINUTE, day,
+            chademoPlugged = true)
+        log = ChargeTracker.observe(log, 110.0, 20_000.0, 55.0, false, HOUR + 3 * MINUTE, day,
+            plugged = false)
+
+        assertEquals(ChargeConnector.CHADEMO, log.sessions.first().connector)
+    }
+
+    /**
+     * Обидва роз'єми за одну сесію → BOTH. Саме той випадок, який назвав власник:
+     * почали на швидкій, докінчили на повільній, а застосунок бачив і те, і те.
+     */
+    @Test
+    fun `a charge that saw both connectors is tagged both`() {
+        var log = ChargeTracker.observe(ChargeLog(), 100.0, 20_000.0, 40.0, false, HOUR, day)
+        log = ChargeTracker.observe(log, 100.0, 20_000.0, 40.0, true, HOUR + MINUTE, day,
+            chademoPlugged = true)
+        log = ChargeTracker.observe(log, 108.0, 20_000.0, 60.0, true, HOUR + 2 * MINUTE, day,
+            chademoPlugged = true)
+        // Перемкнули на повільну — той самий сеанс, роз'єм інший.
+        log = ChargeTracker.observe(log, 110.0, 20_000.0, 65.0, true, HOUR + 3 * MINUTE, day,
+            j1772Plugged = true)
+        log = ChargeTracker.observe(log, 110.0, 20_000.0, 65.0, false, HOUR + 4 * MINUTE, day,
+            plugged = false)
+
+        assertEquals(ChargeConnector.BOTH, log.sessions.first().connector)
+    }
+
+    /** Зарядка без телефона — роз'єму не бачили, тип невідомий. */
+    @Test
+    fun `a charge seen only by soc rise has an unknown connector`() {
+        var log = ChargeTracker.observe(ChargeLog(), 27_000.0, 26_000.0, 20.0, false, HOUR, day)
+        log = ChargeTracker.observe(log, 27_038.0, 26_000.0, 95.0, false, HOUR + 10 * HOUR, day)
+
+        assertEquals(ChargeConnector.UNKNOWN, log.sessions.first().connector)
+    }
+
+    /**
+     * Продовження сесії (ознака 581 блимнула) не роздвоює журнал і не губить тип:
+     * одна зарядка — один запис, тип зведений за обидва шматки.
+     */
+    @Test
+    fun `a resumed charge stays one journal entry keeping its type`() {
+        var log = ChargeTracker.observe(ChargeLog(), 100.0, 20_000.0, 40.0, false, HOUR, day)
+        log = ChargeTracker.observe(log, 100.0, 20_000.0, 40.0, true, HOUR + MINUTE, day,
+            chademoPlugged = true)
+        log = ChargeTracker.observe(log, 108.0, 20_000.0, 60.0, true, HOUR + 2 * MINUTE, day,
+            chademoPlugged = true)
+        // Ознака зарядки блимнула геть — сесія закрилась (у журналі з'явився запис).
+        log = ChargeTracker.observe(log, 108.0, 20_000.0, 60.0, false, HOUR + 3 * MINUTE, day)
+        assertEquals(1, log.sessions.size)
+        // За кілька хвилин зарядка відновилась, уже на повільній.
+        log = ChargeTracker.observe(log, 108.0, 20_000.0, 60.0, true, HOUR + 10 * MINUTE, day,
+            j1772Plugged = true)
+        log = ChargeTracker.observe(log, 110.0, 20_000.0, 65.0, true, HOUR + 11 * MINUTE, day,
+            j1772Plugged = true)
+        log = ChargeTracker.observe(log, 110.0, 20_000.0, 65.0, false, HOUR + 12 * MINUTE, day,
+            plugged = false)
+
+        assertEquals("Один сеанс — один запис", 1, log.sessions.size)
+        assertEquals(ChargeConnector.BOTH, log.sessions.first().connector)
+    }
+
+    // --- СЕРЕДНЯ ШВИДКІСТЬ І ТРИВАЛІСТЬ ------------------------------------------
+
+    /** Середня швидкість = енергія ÷ час; тривалість = кінець − початок. */
+    @Test
+    fun `average speed and duration are computed from start and end`() {
+        val session = com.kirianov.kiasoulevplus2.Data.ChargeSession(
+            kwh = 10.0, socRise = 0.0, startedAtMs = HOUR, endedAtMs = 3 * HOUR,
+            cause = "роз'єм", connector = ChargeConnector.TYPE1,
+        )
+        assertEquals(2 * HOUR, session.durationMs)
+        // 10 кВт·год за 2 год = 5 кВт (без ємності — за лічильником).
+        assertEquals(5.0, session.averageKw(0.0)!!, 0.001)
+    }
+
+    /** Без часу початку середню не рахуємо — прочерк, а не вигадка. */
+    @Test
+    fun `average speed is null without a start`() {
+        val session = com.kirianov.kiasoulevplus2.Data.ChargeSession(
+            kwh = 38.0, socRise = 75.0, startedAtMs = 0L, endedAtMs = HOUR,
+            cause = "пауза", connector = ChargeConnector.UNKNOWN,
+        )
+        assertEquals(0L, session.durationMs)
+        assertNull(session.averageKw(44.0))
     }
 
     /** Журнал обрізається до межі, а не росте без кінця. */

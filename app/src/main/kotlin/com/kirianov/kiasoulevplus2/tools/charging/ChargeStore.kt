@@ -15,6 +15,7 @@
 
 package com.kirianov.kiasoulevplus2.tools.charging
 
+import com.kirianov.kiasoulevplus2.Data.ChargeConnector
 import com.kirianov.kiasoulevplus2.Data.ChargeLog
 import com.kirianov.kiasoulevplus2.Data.ChargeSession
 import com.kirianov.kiasoulevplus2.tools.json.MiniJson
@@ -141,6 +142,10 @@ class FileChargeStore(private val root: File) : ChargeStore, CarDataStore {
             "lastSeenAtMs" to log.lastSeenAtMs.toDouble(),
             "lastDecision" to log.lastDecision,
             "hasBaseline" to log.hasBaseline,
+            // Тип роз'єму поточної сесії: щоб після перезапуску посеред зарядки
+            // застосунок не забув, чим вона йде.
+            "sessionSawType1" to log.sessionSawType1,
+            "sessionSawChademo" to log.sessionSawChademo,
             // Журнал зарядок — колонками, а не вкладеними об'єктами: MiniJson їх не
             // має й навмисно, тож кожне поле сесії лежить своїм масивом рівної
             // довжини, і на читанні вони зшиваються назад за індексом.
@@ -149,6 +154,7 @@ class FileChargeStore(private val root: File) : ChargeStore, CarDataStore {
             "sessionsStartedAtMs" to log.sessions.map { it.startedAtMs.toDouble() },
             "sessionsEndedAtMs" to log.sessions.map { it.endedAtMs.toDouble() },
             "sessionsCause" to log.sessions.map { it.cause },
+            "sessionsConnector" to log.sessions.map { it.connector.name },
         ),
     )
 
@@ -169,6 +175,8 @@ class FileChargeStore(private val root: File) : ChargeStore, CarDataStore {
             lastSeenAtMs = (values["lastSeenAtMs"] as? Double ?: 0.0).toLong(),
             lastDecision = values["lastDecision"] as? String ?: "",
             hasBaseline = values["hasBaseline"] as? Boolean ?: false,
+            sessionSawType1 = values["sessionSawType1"] as? Boolean ?: false,
+            sessionSawChademo = values["sessionSawChademo"] as? Boolean ?: false,
             sessions = decodeSessions(values),
         )
     }
@@ -184,6 +192,7 @@ class FileChargeStore(private val root: File) : ChargeStore, CarDataStore {
         val started = values["sessionsStartedAtMs"] as? List<*> ?: emptyList<Any?>()
         val ended = values["sessionsEndedAtMs"] as? List<*> ?: emptyList<Any?>()
         val cause = values["sessionsCause"] as? List<*> ?: emptyList<Any?>()
+        val connector = values["sessionsConnector"] as? List<*> ?: emptyList<Any?>()
         return kwh.indices.map { i ->
             ChargeSession(
                 kwh = kwh[i] as? Double ?: 0.0,
@@ -191,9 +200,14 @@ class FileChargeStore(private val root: File) : ChargeStore, CarDataStore {
                 startedAtMs = (started.getOrNull(i) as? Double ?: 0.0).toLong(),
                 endedAtMs = (ended.getOrNull(i) as? Double ?: 0.0).toLong(),
                 cause = cause.getOrNull(i) as? String ?: "",
+                connector = connectorOf(connector.getOrNull(i) as? String),
             )
         }
     }
+
+    /** Назва enum → тип роз'єму; невідома чи відсутня (старий файл) — [ChargeConnector.UNKNOWN]. */
+    private fun connectorOf(name: String?): ChargeConnector =
+        ChargeConnector.values().firstOrNull { it.name == name } ?: ChargeConnector.UNKNOWN
 
     private companion object {
         /** Свої файли: їх і переселяємо, коли з'являється авто. */
