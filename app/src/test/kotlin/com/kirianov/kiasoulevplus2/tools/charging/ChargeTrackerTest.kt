@@ -1177,6 +1177,40 @@ class ChargeTrackerTest {
         assertEquals("Заряд упав — це поїздка, у сесію нічого не заносимо", 0.0, after.sessionKwh, 0.001)
     }
 
+    /** Зарядки, старші за вікно зберігання (≈3 місяці), випадають із журналу. */
+    @Test
+    fun `sessions older than the retention window are dropped`() {
+        val dayMs = 24L * 60 * 60 * 1000
+        var log = ChargeLog()
+        val old = 10L * dayMs
+        log = log.withSession(
+            com.kirianov.kiasoulevplus2.Data.ChargeSession(5.0, 10.0, 0L, old, "тест"),
+        )
+        val newest = old + ChargeLog.RETENTION_MS + dayMs
+        log = log.withSession(
+            com.kirianov.kiasoulevplus2.Data.ChargeSession(6.0, 12.0, 0L, newest, "тест"),
+        )
+
+        assertEquals("Стара випала, лишилась свіжа", 1, log.sessions.size)
+        assertEquals(newest, log.sessions.first().endedAtMs)
+    }
+
+    /** А те, що в межах вікна, лишається — обидві зарядки на місці. */
+    @Test
+    fun `sessions within the retention window are kept`() {
+        val dayMs = 24L * 60 * 60 * 1000
+        var log = ChargeLog()
+        val first = 10L * dayMs
+        log = log.withSession(
+            com.kirianov.kiasoulevplus2.Data.ChargeSession(5.0, 10.0, 0L, first, "тест"),
+        )
+        log = log.withSession(
+            com.kirianov.kiasoulevplus2.Data.ChargeSession(6.0, 12.0, 0L, first + 30L * dayMs, "тест"),
+        )
+
+        assertEquals(2, log.sessions.size)
+    }
+
     /** Журнал обрізається до межі, а не росте без кінця. */
     @Test
     fun `the journal is capped`() {

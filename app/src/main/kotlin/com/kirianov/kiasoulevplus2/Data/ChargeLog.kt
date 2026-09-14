@@ -184,9 +184,19 @@ data class ChargeLog(
     val hasLastSession: Boolean get() = lastSessionKwh > 0.0 || lastSessionSocRise > 0.0
     val hasToday: Boolean get() = todayKwh > 0.0 || todaySocRise > 0.0
 
-    /** Додати завершену зарядку в журнал, обрізавши до [MAX_SESSIONS]. */
-    fun withSession(session: ChargeSession): ChargeLog =
-        copy(sessions = (listOf(session) + sessions).take(MAX_SESSIONS))
+    /**
+     * Додати завершену зарядку в журнал. Кількість не обмежуємо — обмежуємо ВІК:
+     * тримаємо зарядки за останні [RETENTION_MS] (≈3 місяці) від найновішої. Так
+     * підсумки «за місяць» і трохи ширше завжди мають на чому рахуватися, а файл не
+     * росте без кінця. [MAX_SESSIONS] лишається лише страховкою від навали через
+     * збиті мітки часу.
+     */
+    fun withSession(session: ChargeSession): ChargeLog {
+        val kept = (listOf(session) + sessions)
+            .filter { session.endedAtMs - it.endedAtMs <= RETENTION_MS }
+            .take(MAX_SESSIONS)
+        return copy(sessions = kept)
+    }
 
     /**
      * Скільки це кВт·год за тією самою міркою, якою рахується запас ходу.
@@ -209,8 +219,11 @@ data class ChargeLog(
         energyOf(todaySocRise, capacityKwh, todayKwh)
 
     companion object {
-        /** Скільки зарядок тримати в журналі. П'ятдесят — це місяці історії. */
-        const val MAX_SESSIONS = 50
+        /** Скільки часу тримати зарядку в журналі: ≈3 місяці від найновішої. */
+        const val RETENTION_MS = 92L * 24 * 60 * 60 * 1000
+
+        /** Страховка від навали записів через збиті мітки часу; у нормі не діє. */
+        const val MAX_SESSIONS = 2_000
     }
 }
 

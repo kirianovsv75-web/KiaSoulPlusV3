@@ -3,6 +3,7 @@
 package com.kirianov.kiasoulevplus2.Interface.screens.main
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -13,10 +14,16 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -32,6 +39,7 @@ import com.kirianov.kiasoulevplus2.Data.BmsData
 import com.kirianov.kiasoulevplus2.Data.CalculatedData
 import com.kirianov.kiasoulevplus2.Interface.SelectCarBanner
 import com.kirianov.kiasoulevplus2.Data.ChargeConnector
+import com.kirianov.kiasoulevplus2.Data.ChargeHistory
 import com.kirianov.kiasoulevplus2.Data.ChargeLog
 import com.kirianov.kiasoulevplus2.Data.ChargeSession
 import com.kirianov.kiasoulevplus2.Data.ChargingState
@@ -41,6 +49,10 @@ import com.kirianov.kiasoulevplus2.Data.ConsumptionWindow
 import com.kirianov.kiasoulevplus2.Data.State
 import com.kirianov.kiasoulevplus2.Data.VehicleData
 import com.kirianov.kiasoulevplus2.Data.WindowStats
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
 import com.kirianov.kiasoulevplus2.tools.format.formatAgo
 import com.kirianov.kiasoulevplus2.tools.format.formatDecimal
 import com.kirianov.kiasoulevplus2.tools.format.formatDuration
@@ -102,6 +114,7 @@ fun MainScreen(mainViewModel: MainViewModel = viewModel()) {
             charging = state.vehicle.charging,
             bms = bms,
             packKwh = state.garage.active.effectivePackKwh,
+            priceUahPerKwh = state.settings.trip.priceUahPerKwh,
             onFinish = GeneralData::requestChargeFinish,
         )
 
@@ -271,6 +284,7 @@ private fun ChargeCard(
     charging: ChargingState,
     bms: BmsData,
     packKwh: Double,
+    priceUahPerKwh: Double,
     onFinish: () -> Unit,
 ) {
     if (!charge.hasBaseline && !charge.hasLastSession && !charge.hasToday) return
@@ -355,20 +369,12 @@ private fun ChargeCard(
                 MetricRow("Рішення", charge.lastDecision)
             }
 
-            // ЖУРНАЛ ЗАРЯДОК. Раніше застосунок пам'ятав лише «останню»: дві зарядки
-            // поспіль — і перша зникала. Тепер вони лежать поряд, найновіша зверху,
-            // із часом, енергією, приростом заряду й тим, чим сесію закрито.
-            if (charge.sessions.isNotEmpty()) {
-                val now = System.currentTimeMillis()
-                Text(
-                    text = "Журнал зарядок",
-                    style = MaterialTheme.typography.titleSmall,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
-                charge.sessions.forEach { session ->
-                    ChargeSessionRow(session = session, packKwh = packKwh, nowMs = now)
-                }
-            }
+            // ЖУРНАЛ ЗАРЯДОК зі згортанням і вибором періоду для підсумків.
+            ChargeHistorySection(
+                sessions = charge.sessions,
+                packKwh = packKwh,
+                priceUahPerKwh = priceUahPerKwh,
+            )
 
             Text(
                 text = "Головне число — приріст заряду на корисну ємність пакета: саме " +
@@ -520,6 +526,169 @@ private fun MetricRow(label: String, value: String) {
     ) {
         Text(text = label, fontSize = 16.sp)
         Text(text = value, fontSize = 16.sp, style = MaterialTheme.typography.titleMedium)
+    }
+}
+
+/** Періоди підсумку історії зарядок. «Період» — свій діапазон дат. */
+private enum class HistoryRange(val label: String) {
+    TODAY("Сьогодні"),
+    DAYS_7("7 днів"),
+    DAYS_30("30 днів"),
+    ALL("Весь час"),
+    CUSTOM("Період"),
+}
+
+private const val DAY_MS = 24L * 60 * 60 * 1000
+
+/** Початок доби (місцевий) для позначки часу. */
+private fun startOfDay(ms: Long): Long = Calendar.getInstance().apply {
+    timeInMillis = ms
+    set(Calendar.HOUR_OF_DAY, 0)
+    set(Calendar.MINUTE, 0)
+    set(Calendar.SECOND, 0)
+    set(Calendar.MILLISECOND, 0)
+}.timeInMillis
+
+/** Кінець доби (місцевий): щоб діапазон «до» включав увесь обраний день. */
+private fun endOfDay(ms: Long): Long = startOfDay(ms) + DAY_MS - 1
+
+private fun dateLabel(ms: Long): String =
+    SimpleDateFormat("dd.MM.yyyy", Locale.US).format(Date(ms))
+
+/** Межі [від, до] обраного періоду. */
+private fun rangeBounds(range: HistoryRange, now: Long, from: Long?, to: Long?): Pair<Long, Long> =
+    when (range) {
+        HistoryRange.TODAY -> startOfDay(now) to now
+        HistoryRange.DAYS_7 -> now - 7 * DAY_MS to now
+        HistoryRange.DAYS_30 -> now - 30 * DAY_MS to now
+        HistoryRange.ALL -> 0L to now
+        HistoryRange.CUSTOM ->
+            (from?.let { startOfDay(it) } ?: 0L) to (to?.let { endOfDay(it) } ?: now)
+    }
+
+/**
+ * ЖУРНАЛ ЗАРЯДОК зі згортанням і вибором періоду для сумарного підрахунку.
+ *
+ * За замовчуванням згорнутий — щоб не тиснути на головну картку. Розгорнувши,
+ * можна вибрати період (сьогодні / 7 / 30 днів / весь час / свій діапазон) і
+ * побачити суму: скільки зарядок, кВт·год за шкалою, і — якщо задана ціна
+ * електрики — гривні. Нижче — список зарядок цього періоду.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ChargeHistorySection(
+    sessions: List<ChargeSession>,
+    packKwh: Double,
+    priceUahPerKwh: Double,
+) {
+    if (sessions.isEmpty()) return
+
+    var expanded by remember { mutableStateOf(false) }
+    var range by remember { mutableStateOf(HistoryRange.DAYS_30) }
+    var customFrom by remember { mutableStateOf<Long?>(null) }
+    var customTo by remember { mutableStateOf<Long?>(null) }
+    var picking by remember { mutableStateOf<String?>(null) }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { expanded = !expanded }
+            .padding(top = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(text = "Журнал зарядок", style = MaterialTheme.typography.titleSmall)
+        Text(
+            text = if (expanded) "згорнути" else "розгорнути",
+            color = MaterialTheme.colorScheme.primary,
+            style = MaterialTheme.typography.bodySmall,
+        )
+    }
+
+    if (!expanded) return
+
+    val now = System.currentTimeMillis()
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        HistoryRange.entries.forEach { option ->
+            FilterChip(
+                selected = range == option,
+                onClick = { range = option },
+                label = { Text(option.label) },
+            )
+        }
+    }
+
+    if (range == HistoryRange.CUSTOM) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            OutlinedButton(onClick = { picking = "from" }, modifier = Modifier.weight(1f)) {
+                Text("Від: " + (customFrom?.let { dateLabel(it) } ?: "—"))
+            }
+            OutlinedButton(onClick = { picking = "to" }, modifier = Modifier.weight(1f)) {
+                Text("До: " + (customTo?.let { dateLabel(it) } ?: "—"))
+            }
+        }
+    }
+
+    val (fromMs, toMs) = rangeBounds(range, now, customFrom, customTo)
+    val totals = ChargeHistory.totals(sessions, packKwh, fromMs, toMs)
+    val cost = if (priceUahPerKwh > 0.0) totals.energyKwh * priceUahPerKwh else 0.0
+
+    MetricRow(
+        "За період",
+        "${totals.count} зар. · " + formatMeasurement(totals.energyKwh, 1, "кВт·год"),
+    )
+    if (cost > 0.0) {
+        MetricRow("Вартість", formatMeasurement(cost, 0, "грн"))
+    }
+    if (!totals.isEmpty) {
+        Text(
+            text = "за лічильником ${formatDecimal(totals.counterKwh, 1)} кВт·год · " +
+                "+${formatDecimal(totals.socRise, 0)} %",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+
+    val shown = ChargeHistory.inRange(sessions, fromMs, toMs)
+    if (shown.isEmpty()) {
+        Text(
+            text = "За цей період зарядок немає.",
+            style = MaterialTheme.typography.bodySmall,
+        )
+    } else {
+        shown.forEach { session ->
+            ChargeSessionRow(session = session, packKwh = packKwh, nowMs = now)
+        }
+    }
+
+    picking?.let { which ->
+        val initial = (if (which == "from") customFrom else customTo) ?: now
+        val pickerState = rememberDatePickerState(initialSelectedDateMillis = initial)
+        DatePickerDialog(
+            onDismissRequest = { picking = null },
+            confirmButton = {
+                TextButton(onClick = {
+                    pickerState.selectedDateMillis?.let { chosen ->
+                        if (which == "from") customFrom = chosen else customTo = chosen
+                    }
+                    picking = null
+                }) { Text("Ок") }
+            },
+            dismissButton = {
+                TextButton(onClick = { picking = null }) { Text("Скасувати") }
+            },
+        ) {
+            DatePicker(state = pickerState)
+        }
     }
 }
 
