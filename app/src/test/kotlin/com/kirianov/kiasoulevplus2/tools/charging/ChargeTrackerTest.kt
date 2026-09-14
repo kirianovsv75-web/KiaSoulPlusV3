@@ -1126,6 +1126,57 @@ class ChargeTrackerTest {
         assertNull(session.averageKw(44.0))
     }
 
+    /**
+     * ПІД'ЄДНАННЯ ПОСЕРЕД НІЧНОЇ ЗАРЯДКИ, ЯКА ЩЕ ЙДЕ — і ніч не має пропасти.
+     *
+     * Числа з живого журналу: увечері лічильник 27503.4 при 11.5 %, а вранці
+     * телефон під'єднався до авто, яке ще доганяє останні відсотки (86 %),
+     * лічильник уже 27526.6. Різниця 23.2 кВт·год — це ніч, і раніше вона зникала:
+     * застосунок бачив «заряджаюсь», брав новий базовий показ і викидав різницю.
+     */
+    @Test
+    fun `reconnecting into an ongoing overnight charge credits the night`() {
+        val evening = observe(ChargeLog(), counter = 27_503.4, charging = false, nowMs = HOUR,
+            dischargedKwh = 26_480.0, socPercent = 11.5)
+
+        val morning = ChargeTracker.observe(
+            log = evening,
+            counterKwh = 27_526.6,
+            dischargedKwh = 26_480.9,
+            socPercent = 86.0,
+            isCharging = true,
+            nowMs = HOUR + 8 * HOUR,
+            dayKey = day,
+        )
+
+        assertTrue("Зарядка триває", morning.charging)
+        assertEquals("Ніч зарахована в сесію, що триває", 23.2, morning.sessionKwh, 0.05)
+        assertEquals(23.2, morning.todayKwh, 0.05)
+    }
+
+    /**
+     * А ось поїздку перед зарядкою так само НЕ зараховуємо: приїхав майже порожній,
+     * увімкнув зарядку — приріст лічильника до неї належить рекуперації, не зарядці.
+     */
+    @Test
+    fun `reconnecting into a charge after driving does not over-credit`() {
+        val before = observe(ChargeLog(), counter = 27_503.4, charging = false, nowMs = HOUR,
+            dischargedKwh = 26_480.0, socPercent = 80.0)
+
+        val after = ChargeTracker.observe(
+            log = before,
+            counterKwh = 27_510.0,
+            dischargedKwh = 26_495.0,
+            socPercent = 40.0,
+            isCharging = true,
+            nowMs = HOUR + 2 * HOUR,
+            dayKey = day,
+        )
+
+        assertTrue(after.charging)
+        assertEquals("Заряд упав — це поїздка, у сесію нічого не заносимо", 0.0, after.sessionKwh, 0.001)
+    }
+
     /** Журнал обрізається до межі, а не росте без кінця. */
     @Test
     fun `the journal is capped`() {

@@ -569,8 +569,16 @@ object ChargeTracker {
      * цього моменту, до зарядки не належить.
      *
      * Якщо телефон під'єднався посеред зарядки, у сесію потрапить лише та частина,
-     * яку ми бачили. Це свідома недооцінка: приписати сесії рекуперацію попередньої
-     * поїздки було б гірше за недорахований кілловат-годину.
+     * яку ми бачили, — АЛЕ з важливим винятком нижче.
+     *
+     * ПІД'ЄДНАННЯ ПОСЕРЕД НІЧНОЇ ЗАРЯДКИ, ЯКА ЩЕ ЙДЕ, і це виправлення втраченої
+     * ночі. Авто зарядилось уночі без телефона й на ранок ще доганяє останні
+     * відсотки. Телефон під'єднується, бачить «заряджаюсь» — і брав новий базовий
+     * показ, викидаючи всю ніч (у журналі: лічильник стрибнув на 23 кВт·год, а
+     * сесія почалася з нуля). Тому перш ніж викинути різницю, перевіряємо її тим
+     * самим свідком, що й пропущену зарядку: якщо за час відсутності заряд ВИРІС,
+     * авто не їхало, а лічильник відданої стояв — це не рекуперація за поїздку, а
+     * та сама зарядка, і її треба зарахувати в сесію, що триває.
      */
     private fun started(
         log: ChargeLog,
@@ -584,6 +592,17 @@ object ChargeTracker {
     ): ChargeLog {
         val continuing = nowMs - log.lastSessionEndedAtMs < SESSION_GAP_MS && log.lastSessionEndedAtMs > 0L
 
+        // Чи набігла зарядка за час нашої відсутності, поки цей самий сеанс ще триває.
+        // Перевіряємо лише коли це НЕ продовження закритої сесії — там уже все своє.
+        val priorStep = counterKwh - log.counterBaselineKwh
+        val prior = if (!continuing) {
+            missedCharge(log, priorStep, dischargedKwh, socPercent, nowMs, odometerKm)
+        } else {
+            Verdict(null, "")
+        }
+        val priorKwh = prior.kwh ?: 0.0
+        val priorCredited = priorKwh > 0.0
+
         // ПРОДОВЖЕННЯ БЕРЕТЬСЯ З ЗАКРИТОЇ СЕСІЇ, А НЕ З ПОТОЧНОЇ, і це виправлення
         // помилки, яка з'їдала нічні зарядки на очах у власника.
         //
@@ -596,8 +615,16 @@ object ChargeTracker {
         //
         // Добовий підсумок при цьому не постраждає: він накопичується приростами
         // окремо й від відкриття-закриття сесії не залежить.
-        val carried = if (continuing) maxOf(log.sessionKwh, log.lastSessionKwh) else 0.0
-        val carriedSoc = if (continuing) maxOf(log.sessionSocRise, log.lastSessionSocRise) else 0.0
+        val carried = when {
+            continuing -> maxOf(log.sessionKwh, log.lastSessionKwh)
+            priorCredited -> priorKwh
+            else -> 0.0
+        }
+        val carriedSoc = when {
+            continuing -> maxOf(log.sessionSocRise, log.lastSessionSocRise)
+            priorCredited -> prior.socRise
+            else -> 0.0
+        }
 
         // ЖУРНАЛ НЕ РОЗСИПАЄТЬСЯ НА ШМАТКИ. Те саме блимання ознаки 581, що колись
         // з'їдало нічну зарядку, тепер лишило б у журналі кілька обривків однієї
@@ -632,6 +659,15 @@ object ChargeTracker {
             sessionKwh = carried,
             sessionSocRise = carriedSoc,
             sessionStartedAtMs = startedAt,
+            // Зарахований нічний доробок належить сьогоднішній добі так само, як і
+            // приростова частина, що набіжить далі.
+            todayKwh = if (priorCredited) log.todayKwh + priorKwh else log.todayKwh,
+            todaySocRise = if (priorCredited) log.todaySocRise + prior.socRise else log.todaySocRise,
+            lastDecision = if (priorCredited) {
+                "зараховано ${round(priorKwh)} кВт·год за час без телефона, зарядка триває"
+            } else {
+                log.lastDecision
+            },
             sessionSawType1 = j1772Plugged || prevType1,
             sessionSawChademo = chademoPlugged || prevChademo,
         )
