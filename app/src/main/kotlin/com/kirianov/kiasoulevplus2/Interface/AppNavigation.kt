@@ -6,6 +6,8 @@ package com.kirianov.kiasoulevplus2.Interface
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
@@ -24,13 +26,18 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.collectAsState
 import androidx.compose.ui.Modifier
+import kotlinx.coroutines.launch
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -58,7 +65,26 @@ fun AppNavigation() {
     // в «Батарею» — і ти знову на «Комірках», а не на «Головній». Без цього кожен
     // похід у сусідній розділ коштує ще двох дотиків, щоб повернутися туди, де був.
     val opened = remember { mutableStateMapOf<AppSection, AppPage>() }
-    val page = opened[section] ?: section.pages.first()
+    val pages = section.pages
+
+    // СВАЙП МІЖ ПІДСТОРІНКАМИ. Тягтися вгору до вкладок незручно за кермом, тож
+    // сторінки розділу гортаються пальцем, а самі вкладки переїхали вниз (у
+    // bottomBar, над розділами). Пейджер свій на кожен розділ (key за розділом),
+    // щоб пам'ятати, де ти був: стартова сторінка — та, що [opened] зберіг.
+    val scope = rememberCoroutineScope()
+    val pagerState = key(section) {
+        rememberPagerState(
+            initialPage = pages.indexOf(opened[section] ?: pages.first()).coerceAtLeast(0),
+            pageCount = { pages.size },
+        )
+    }
+    // Гортання пальцем запам'ятовує сторінку розділу — щоб повернутись саме сюди.
+    LaunchedEffect(section, pagerState) {
+        snapshotFlow { pagerState.currentPage }.collect { index ->
+            opened[section] = pages[index.coerceIn(pages.indices)]
+        }
+    }
+    val page = pages[pagerState.currentPage.coerceIn(pages.indices)]
 
     // Обрив зв'язку видно за кольором, не вчитуючись у рядок статусу: за кермом
     // читати нема коли. Фарбуємо тут, а не на головному екрані, бо втрата
@@ -81,14 +107,30 @@ fun AppNavigation() {
         Scaffold(
             modifier = Modifier.fillMaxSize(),
             bottomBar = {
-                NavigationBar {
-                    AppSection.entries.forEach { item ->
-                        NavigationBarItem(
-                            selected = section == item,
-                            onClick = { section = item },
-                            label = { Text(item.title) },
-                            icon = { },
+                Column {
+                    // Вкладки підсторінок переїхали вниз, до великого пальця, і
+                    // з'являються лише там, де є з чого вибирати. Тап або свайп —
+                    // обидва ведуть через той самий пейджер.
+                    if (pages.size > 1) {
+                        PageTabs(
+                            pages = pages,
+                            current = page,
+                            onSelect = { target ->
+                                scope.launch {
+                                    pagerState.animateScrollToPage(pages.indexOf(target).coerceAtLeast(0))
+                                }
+                            },
                         )
+                    }
+                    NavigationBar {
+                        AppSection.entries.forEach { item ->
+                            NavigationBarItem(
+                                selected = section == item,
+                                onClick = { section = item },
+                                label = { Text(item.title) },
+                                icon = { },
+                            )
+                        }
                     }
                 }
             },
@@ -112,27 +154,26 @@ fun AppNavigation() {
                                 onBus = state.garage.detectedVin,
                             )
                         }
-                        // Верхній ряд з'являється лише там, де є з чого вибирати:
-                        // ряд з однієї вкладки нічого не каже, а місце з'їдає.
-                        if (section.pages.size > 1) {
-                            PageTabs(
-                                pages = section.pages,
-                                current = page,
-                                onSelect = { opened[section] = it },
-                            )
-                        }
 
-                        when (page) {
-                            AppPage.MAIN -> MainScreen()
-                            AppPage.PREDICTION ->
-                                PredictionScreen(predictionViewModel = viewModel<PredictionViewModel>())
-                            AppPage.CELLS -> CellsScreen(cellsViewModel = viewModel<CellsViewModel>())
-                            AppPage.CAR_OVERVIEW -> CarOverviewScreen()
-                            AppPage.CAR_SYSTEMS -> CarSystemsScreen()
-                            AppPage.CAR_FAULTS -> CarFaultsScreen()
-                            AppPage.PROBE -> ProbeScreen(probeViewModel = viewModel<ProbeViewModel>())
-                            AppPage.SETTINGS ->
-                                SettingsScreen(settingsViewModel = viewModel<SettingsViewModel>())
+                        // Пейджер розділу: сторінки гортаються свайпом ліворуч-праворуч.
+                        // Кожна сторінка сама вертикально прокручується, тож горизонтальні
+                        // й вертикальні жести не заважають одне одному.
+                        HorizontalPager(
+                            state = pagerState,
+                            modifier = Modifier.fillMaxSize(),
+                        ) { index ->
+                            when (pages[index]) {
+                                AppPage.MAIN -> MainScreen()
+                                AppPage.PREDICTION ->
+                                    PredictionScreen(predictionViewModel = viewModel<PredictionViewModel>())
+                                AppPage.CELLS -> CellsScreen(cellsViewModel = viewModel<CellsViewModel>())
+                                AppPage.CAR_OVERVIEW -> CarOverviewScreen()
+                                AppPage.CAR_SYSTEMS -> CarSystemsScreen()
+                                AppPage.CAR_FAULTS -> CarFaultsScreen()
+                                AppPage.PROBE -> ProbeScreen(probeViewModel = viewModel<ProbeViewModel>())
+                                AppPage.SETTINGS ->
+                                    SettingsScreen(settingsViewModel = viewModel<SettingsViewModel>())
+                            }
                         }
                     }
                 }
@@ -142,11 +183,11 @@ fun AppNavigation() {
 }
 
 /**
- * Верхній ряд сторінок розділу.
+ * Ряд вкладок сторінок розділу — тепер унизу, над розділами, під великим пальцем.
  *
  * Прокручується вбік навмисно: розділів із трьома вкладками вистачає зараз, а
  * «Авто» дійде до десятка, і ряд, який стискає підписи до нечитабельних, гірший за
- * ряд, який їде вбік.
+ * ряд, який їде вбік. Тап тут гортає той самий пейджер, що й свайп.
  */
 @Composable
 private fun PageTabs(pages: List<AppPage>, current: AppPage, onSelect: (AppPage) -> Unit) {
